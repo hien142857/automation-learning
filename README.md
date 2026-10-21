@@ -14,6 +14,12 @@
 
 **Lưu công việc trong app đích trước khi chạy:** Cold force-stop tiến trình, Warm xóa task / tạo lại Activity. Không xóa dữ liệu ứng dụng. Một số app có thể tự lưu / thay đổi dữ liệu khi được mở; dùng tài khoản và dữ liệu test.
 
+### Nút bắt đầu bị khóa / kết nối dịch vụ đo
+
+Từ bản 0.1.1, nút bị khóa có màu xám và hiện lý do ngay phía trên. Nút chỉ bật khi Shizuku đã chạy, đã cấp quyền, dịch vụ đo đã kết nối, đã chọn package và ít nhất một kiểu đo. Trạng thái “Đang kết nối dịch vụ đo” chưa đủ để bắt đầu, dù Shizuku đã được cấp quyền.
+
+Nếu kết nối quá 15 giây, công cụ hiển thị lỗi thay vì chờ vô hạn. Bấm **Kết nối / hướng dẫn** để gỡ phiên dịch vụ cũ và khởi tạo lại. Nếu vẫn không kết nối, kiểm tra quyền Startup Bench trong Shizuku → Authorized applications, khởi động lại Shizuku rồi mở lại công cụ. Cần kiểm tra log trên thiết bị để xác định lỗi khởi chạy dịch vụ cụ thể; thông báo timeout không tự xác định nguyên nhân.
+
 ## Số đo và giới hạn
 
 - Dùng `am start -W --user <current-user> -n <launcher-component>` với quyền shell từ Shizuku UserService. Chỉ truyền danh sách đối số đã kiểm tra, không chạy chuỗi shell tùy ý.

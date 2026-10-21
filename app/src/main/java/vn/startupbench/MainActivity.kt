@@ -32,6 +32,7 @@ class MainActivity : Activity() {
     private var progressText: TextView? = null
     private var statusText: TextView? = null
     private var startButton: Button? = null
+    private var readinessText: TextView? = null
     private var selectionPreview: LinearLayout? = null
     private var selectedPackage = ""
     private var note = ""
@@ -44,18 +45,14 @@ class MainActivity : Activity() {
     private var pendingCsv = ""
     private val permissionListener = Shizuku.OnRequestPermissionResultListener { _, result ->
         runOnUiThread {
-            if (result == PackageManager.PERMISSION_GRANTED) BenchEngine.connect(this)
+            if (result == PackageManager.PERMISSION_GRANTED) BenchEngine.connect(this, retry = true)
             else message("Chưa được cấp quyền. Mở Shizuku → Authorized applications để cấp lại.")
         }
     }
     private val tick = object : Runnable {
         override fun run() {
-            val ready = runCatching { Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
-            if (!ready || BenchEngine.remote?.asBinder()?.isBinderAlive == false) BenchEngine.remote = null
-            if (ready && BenchEngine.remote == null && !BenchEngine.running) BenchEngine.connect(this@MainActivity)
-            statusText?.text = when { BenchEngine.remote != null -> "● Shizuku đã kết nối"; ready -> "● Đang kết nối dịch vụ đo…"; else -> "○ Cần kết nối Shizuku" }
+            refreshReadiness()
             progressText?.text = BenchEngine.progress.ifEmpty { "Sẵn sàng. Màn hình cần mở khóa trong suốt phiên đo." }
-            startButton?.isEnabled = ready && BenchEngine.remote != null && !BenchEngine.running
             if (wasRunning && !BenchEngine.running) render()
             wasRunning = BenchEngine.running
             handler.postDelayed(this, 1000)
@@ -91,8 +88,30 @@ class MainActivity : Activity() {
         text = value; textSize = size; setTextColor(color); setPadding(0, dp(6), 0, dp(6))
     }
     private fun button(label: String, action: () -> Unit) = Button(this).apply {
-        text = label; isAllCaps = false; setTextColor(bg); backgroundTintList = android.content.res.ColorStateList.valueOf(accent)
+        val states = arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf())
+        text = label; isAllCaps = false
+        setTextColor(android.content.res.ColorStateList(states, intArrayOf(muted, bg)))
+        backgroundTintList = android.content.res.ColorStateList(states, intArrayOf(Color.rgb(57, 68, 84), accent))
         setOnClickListener { action() }
+    }
+    private fun refreshReadiness(): StartReadiness {
+        val binder = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
+        val permission = binder && runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false)
+        if (!permission || BenchEngine.remote?.asBinder()?.isBinderAlive == false) BenchEngine.remote = null
+        if (permission && BenchEngine.remote == null && !BenchEngine.running) BenchEngine.connect(this)
+        val state = StartReadiness.evaluate(binder, permission, BenchEngine.remote != null, BenchEngine.running,
+            selectedPackage.trim(), modes.isNotEmpty(), BenchEngine.connectionError)
+        statusText?.text = when {
+            !binder -> "○ Cần chạy Shizuku"
+            !permission -> "○ Chưa cấp quyền Shizuku"
+            BenchEngine.connectionError.isNotBlank() -> "○ Lỗi kết nối dịch vụ đo"
+            BenchEngine.remote != null -> "● Shizuku và dịch vụ đo đã kết nối"
+            else -> "○ Đang kết nối dịch vụ đo…"
+        }
+        startButton?.isEnabled = state.enabled
+        startButton?.text = if (BenchEngine.running) "Đang đo…" else "Bắt đầu đo & lưu phiên"
+        readinessText?.text = state.message
+        return state
     }
     private fun card(parent: LinearLayout = content, block: LinearLayout.() -> Unit): LinearLayout = column().apply {
         background = shape(surface); setPadding(dp(18), dp(14), dp(18), dp(14))
@@ -108,7 +127,7 @@ class MainActivity : Activity() {
         })
     }
     private fun render() {
-        statusText = null; progressText = null; startButton = null
+        statusText = null; progressText = null; startButton = null; readinessText = null
         root = column().apply { setBackgroundColor(bg); setPadding(dp(20), dp(14), dp(20), 0) }
         root.setOnApplyWindowInsetsListener { view, insets ->
             val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
@@ -135,7 +154,7 @@ class MainActivity : Activity() {
         }
         card {
             addView(text("01   Chọn ứng dụng", 18f))
-            packageInput = input("com.example.app", selectedPackage) { selectedPackage = it; updateSelection() }; addView(packageInput)
+            packageInput = input("com.example.app", selectedPackage) { selectedPackage = it; updateSelection(); refreshReadiness() }; addView(packageInput)
             selectionPreview = LinearLayout(this@MainActivity); addView(selectionPreview); updateSelection()
             addView(button("Chọn app trên điện thoại") { chooseApp() })
             addView(text("Chỉ đo app có màn hình launcher, cùng hồ sơ người dùng.", 12f, muted))
@@ -145,7 +164,7 @@ class MainActivity : Activity() {
             listOf("COLD" to "Cold · dừng tiến trình trước khi mở", "WARM" to "Warm · tạo lại task / Activity", "HOT" to "Hot · đưa Activity trở lại foreground").forEach { (mode, label) ->
                 addView(CheckBox(this@MainActivity).apply {
                     text = label; setTextColor(Color.WHITE); isChecked = mode in modes
-                    setOnCheckedChangeListener { _, checked -> if (checked) modes.add(mode) else modes.remove(mode) }
+                    setOnCheckedChangeListener { _, checked -> if (checked) modes.add(mode) else modes.remove(mode); refreshReadiness() }
                 })
             }
             addView(text("Số lần / kiểu đo", 13f, muted))
@@ -162,6 +181,7 @@ class MainActivity : Activity() {
             })
             noteInput = input("Nhãn / ghi chú, ví dụ: staging build 102", note) { note = it }; addView(noteInput)
             addView(text("Cold sẽ force-stop app; Warm sẽ xóa task đang mở. Hãy lưu công việc trong app đích trước khi đo.", 13f, muted))
+            readinessText = text("Đang kiểm tra điều kiện đo…", 14f, accent); addView(readinessText)
             startButton = button("Bắt đầu đo & lưu phiên") { startRun() }.apply { isEnabled = false }; addView(startButton)
             progressText = text(BenchEngine.progress, 14f, accent); addView(progressText)
             if (BenchEngine.running) addView(button("Dừng sau mẫu hiện tại") { BenchEngine.cancel = true; message("Sẽ dừng sau khi lệnh đang chạy kết thúc.") })
@@ -171,6 +191,7 @@ class MainActivity : Activity() {
             addView(text("Đo TotalTime từ Android Activity Manager, không phải thời gian tải xong dữ liệu. Chỉ mẫu có LaunchState đúng yêu cầu mới được tính. Hot có thể không có TotalTime trên một số máy; khi đó báo không hợp lệ, không tự gán 0 ms.", 13f, muted))
         }
         BenchEngine.session?.let { item -> if (!BenchEngine.running) renderSummary(item) }
+        refreshReadiness()
     }
     private fun connect() {
         if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) {
@@ -179,7 +200,7 @@ class MainActivity : Activity() {
                 .setPositiveButton("Đã hiểu", null).show(); return
         }
         runCatching {
-            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) BenchEngine.connect(this)
+            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) BenchEngine.connect(this, retry = true)
             else Shizuku.requestPermission(100)
         }.onFailure { message("Không cấp được quyền: ${it.message}") }
     }
@@ -223,6 +244,9 @@ class MainActivity : Activity() {
         dialog.show()
     }
     private fun startRun() {
+        val state = refreshReadiness()
+        if (!state.enabled) { startError(state.message); return }
+        progressText?.text = "Đã nhận thao tác bấm. Đang kiểm tra ứng dụng…"
         if (modes.isEmpty()) { message("Chọn ít nhất một kiểu đo."); return }
         val pkg = selectedPackage.trim()
         if (pkg == packageName || pkg == "moe.shizuku.privileged.api") { message("Không đo chính công cụ hoặc Shizuku."); return }
@@ -234,7 +258,13 @@ class MainActivity : Activity() {
                 packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString(),
                 info.versionName ?: "?", info.longVersionCode, modes.toList(), repeats, note)
             wasRunning = true; render()
-        } catch (e: Exception) { message(e.message ?: "Không thể bắt đầu đo") }
+        } catch (e: Exception) { startError(e.message ?: "Không thể bắt đầu đo") }
+    }
+    private fun startError(reason: String) {
+        val value = "Không thể bắt đầu đo: $reason"
+        progressText?.text = value
+        BenchEngine.progress = value
+        AlertDialog.Builder(this).setTitle("Chưa bắt đầu phiên đo").setMessage(reason).setPositiveButton("Đã hiểu", null).show()
     }
     private fun renderSummary(item: JSONObject) {
         card {
