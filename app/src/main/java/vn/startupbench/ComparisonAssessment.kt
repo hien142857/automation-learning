@@ -10,8 +10,9 @@ data class ComparisonAssessment(
     val verdict: ComparisonVerdict, val title: String, val advice: String
 ) {
     companion object {
-        fun assess(a: List<Long>, b: List<Long>, sameConditions: Boolean, complete: Boolean, observationIntervalMs: Double = 0.0): ComparisonAssessment {
-            val before = LaunchResult.median(a); val after = LaunchResult.median(b)
+        fun assess(a: List<Long>, b: List<Long>, sameConditions: Boolean, complete: Boolean, observationIntervalMs: Double = 0.0,
+                   statistic: SummaryStatistic = SummaryStatistic.MEDIAN): ComparisonAssessment {
+            val before = statistic.value(a); val after = statistic.value(b)
             val delta = if (before != null && after != null) after - before else null
             val percent = if (delta != null && before!! > 0) delta / before * 100 else null
             fun result(verdict: ComparisonVerdict, title: String, advice: String) =
@@ -30,7 +31,9 @@ data class ComparisonAssessment(
                 val n = distances.size
                 return if (n % 2 == 1) distances[n / 2] else (distances[n / 2 - 1] + distances[n / 2]) / 2
             }
-            if (absolute <= 2 * max(mad(a, before), mad(b, after))) return result(ComparisonVerdict.INCONCLUSIVE, "Kết quả còn dao động lớn", "Chênh lệch chưa vượt rõ độ dao động giữa các lần đo. Giữ nhiệt độ, pin và mạng tương đương rồi đo lại 10 lần.")
+            fun spread(values: List<Long>, center: Double): Double = if (statistic == SummaryStatistic.MEDIAN) mad(values, center)
+                else kotlin.math.sqrt(values.sumOf { (it.toDouble() - center) * (it.toDouble() - center) } / (values.size - 1))
+            if (absolute <= 2 * max(spread(a, before), spread(b, after))) return result(ComparisonVerdict.INCONCLUSIVE, "Kết quả còn dao động lớn", "Chênh lệch chưa vượt rõ độ dao động giữa các lần đo. Giữ nhiệt độ, pin và mạng tương đương rồi đo lại 10 lần.")
             return if (delta < 0) result(ComparisonVerdict.IMPROVED, "B có dấu hiệu nhanh hơn", "Kết quả cho thấy cải thiện ở kiểu đo này. Lặp lại một phiên cùng điều kiện để xác nhận trước khi chốt tối ưu.")
             else result(ComparisonVerdict.REGRESSED, "B có dấu hiệu chậm hơn", "Ưu tiên kiểm tra kiểu khởi động này. Đo lại cùng điều kiện; nếu tiếp tục chậm, ghi nhận hồi quy hiệu năng.")
         }

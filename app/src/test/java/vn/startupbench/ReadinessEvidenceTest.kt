@@ -38,6 +38,8 @@ class ReadinessEvidenceTest {
     @Test fun adsAndHumanActionsAreKeptInSeparateCohort() {
         val s = session(proof().put("status", "assisted_ui").put("assisted", true))
         assertTrue(s.readyValues("COLD").isEmpty()); assertEquals(listOf(1000L), s.assistedValues("COLD"))
+        assertEquals(listOf(100L), s.cohortAndroidValues("COLD", MeasurementCohort.ASSISTED))
+        assertTrue(s.cohortAndroidValues("COLD", MeasurementCohort.AUTOMATIC).isEmpty())
     }
     @Test fun manualConfirmationDelayDoesNotChangeReadyObservation() {
         val p = proof().put("testerConfirmedUptimeMs", 90000)

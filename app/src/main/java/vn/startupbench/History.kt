@@ -62,11 +62,24 @@ fun JSONObject.assistedValues(mode: String): List<Long> {
     }
 }
 
-fun JSONObject.observationIntervals(mode: String): List<Long> {
+fun JSONObject.cohortValues(mode: String, cohort: MeasurementCohort): List<Long> =
+    if (cohort == MeasurementCohort.AUTOMATIC) readyValues(mode) else assistedValues(mode)
+
+fun JSONObject.cohortAndroidValues(mode: String, cohort: MeasurementCohort): List<Long> {
     val samples = optJSONArray("samples") ?: JSONArray()
     return androidResults().mapIndexedNotNull { index, result ->
         val proof = samples.getJSONObject(index).optJSONObject("evidence")
-        if (result.mode == mode && result.stateVerified && EvidencePolicy.launchAccepted(proof, result.raw))
+        val accepted = if (cohort == MeasurementCohort.AUTOMATIC) EvidencePolicy.launchAccepted(proof, result.raw) else EvidencePolicy.launchAssisted(proof, result.raw)
+        result.totalMs?.takeIf { result.mode == mode && result.stateVerified && accepted }
+    }
+}
+
+fun JSONObject.observationIntervals(mode: String, cohort: MeasurementCohort = MeasurementCohort.AUTOMATIC): List<Long> {
+    val samples = optJSONArray("samples") ?: JSONArray()
+    return androidResults().mapIndexedNotNull { index, result ->
+        val proof = samples.getJSONObject(index).optJSONObject("evidence")
+        val accepted = if (cohort == MeasurementCohort.AUTOMATIC) EvidencePolicy.launchAccepted(proof, result.raw) else EvidencePolicy.launchAssisted(proof, result.raw)
+        if (result.mode == mode && result.stateVerified && accepted)
             proof!!.getLong("firstMatchUptimeMs") - maxOf(proof.getLong("launchUptimeMs"), proof.getLong("lastMissingUptimeMs")) else null
     }
 }

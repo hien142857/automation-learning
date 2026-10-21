@@ -320,32 +320,32 @@ class MainActivity : Activity() {
             }
             addView(text("${item.optString("device")} · Android ${item.optString("android")}\n${date(item)} · $status\n${item.optString("note")}", 12f, muted))
             addView(text("Pin ${item.optInt("batteryLevel", -1)}% · ${item.optInt("batteryTempTenthsC", -1) / 10.0}°C · tiết kiệm pin: ${item.optBoolean("powerSave")}", 12f, muted))
+            addView(text("Trung bình = tổng thời gian / số mẫu được xác nhận trong CÙNG nhóm. Không gộp ads và không ads.", 13f, muted))
             listOf("COLD", "WARM", "HOT").forEach { mode ->
-                val values = item.values(mode)
-                val results = item.results().filter { it.mode == mode }
-                val total = results.size
-                val observed = item.readyValues(mode)
-                val assisted = item.assistedValues(mode)
-                addView(text("$mode · Mốc UI ${LaunchResult.median(observed)?.let { ms(it) } ?: "—"}", 21f, accent))
-                addView(text("Android TotalTime (đã có bằng chứng UI): ${LaunchResult.median(values)?.let { ms(it) } ?: "—"}", 13f, muted))
-                if (assisted.isNotEmpty()) addView(text("Nhóm có ads/thao tác: ${assisted.size} mẫu, median quan sát ${LaunchResult.median(assisted)?.let { ms(it) }}. Không trộn vào nhóm tự động.", 13f, Color.rgb(255, 205, 126)))
-                val requested = item.optJSONArray("modes")?.let { a -> (0 until a.length()).any { a.optString(it) == mode } } ?: true
-                val count = when {
-                    !requested -> "Không chọn kiểu đo này"
-                    total == 0 -> "Chưa chạy"
-                    else -> "${observed.size}/$total mẫu xác minh tự động · dự kiến ${item.optInt("repeats", total)} lần"
+                addView(text(mode, 23f, accent).apply { setTypeface(null, Typeface.BOLD) })
+                val attempted = item.androidResults().count { it.mode == mode }
+                val groups = MeasurementCohort.entries.associateWith { item.cohortValues(mode, it) }
+                val accepted = groups.values.sumOf { it.size }
+                addView(text("Đã chạy $attempted · xác nhận $accepted · chưa đủ bằng chứng ${attempted - accepted} · dự kiến ${item.optInt("repeats", attempted)} lần", 12f, muted))
+                groups.forEach { (cohort, samples) ->
+                    val color = if (cohort == MeasurementCohort.AUTOMATIC) accent else Color.rgb(255, 205, 126)
+                    addView(text(cohort.label, 16f, color).apply { setTypeface(null, Typeface.BOLD) })
+                    if (samples.isEmpty()) {
+                        addView(text("Chưa có mẫu trong nhóm này", 13f, muted))
+                    } else {
+                        val stats = SampleStatistics.of(samples)
+                        addView(text("Trung bình ${ms(stats.mean!!)}", 25f, color))
+                        addView(text("${stats.count} mẫu · trung vị ${ms(stats.median!!)}\nMin ${stats.min} · max ${stats.max} ms", 14f))
+                        val android = SampleStatistics.of(item.cohortAndroidValues(mode, cohort))
+                        addView(text("Android TotalTime: TB ${android.mean?.let { ms(it) } ?: "không có"} (${android.count} mẫu có số đo Android)", 12f, muted))
+                        addView(SampleChart(this@MainActivity, samples, color), LinearLayout.LayoutParams(-1, dp(90)))
+                        addView(text("Từng mẫu: ${samples.joinToString(" · ")} ms", 12f, muted))
+                        if (cohort == MeasurementCohort.ASSISTED) addView(text("Bao gồm thời gian ads, chờ và thao tác/kiểm tra lại của tester. Đây là thời gian trải nghiệm đến mốc UI, không phải tốc độ khởi động thuần.", 13f, color))
+                        if (stats.count < 5) addView(text("Có số liệu nhưng mới ${stats.count} mẫu; nên đo ít nhất 5–10 lần để đối chứng.", 12f, muted))
+                    }
                 }
-                addView(text(count, 12f, muted))
-                if (observed.isNotEmpty()) {
-                    addView(text("Mốc UI: min ${observed.min()} · max ${observed.max()} ms", 12f, muted))
-                    addView(SampleChart(this@MainActivity, observed, accent), LinearLayout.LayoutParams(-1, dp(90)))
-                    addView(text("Mẫu có bằng chứng, không thao tác · 0–${observed.max()} ms", 12f, muted))
-                }
-                results.firstOrNull { !it.valid }?.let { result ->
-                    addView(text(MeasurementFailure.short(result.error ?: result.raw), 13f, Color.rgb(255, 185, 160)).apply {
-                        maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END
-                    })
-                }
+                if (attempted == 0) addView(text("Chưa chạy kiểu đo này; không gán thời gian 0.", 12f, muted))
+                if (attempted > accepted) addView(text("${attempted - accepted} mẫu chưa đủ bằng chứng không được tính trung bình. Xem Chi tiết để biết lý do.", 12f, muted))
             }
             addView(button("Chi tiết từng lần / log Android") { details(item) })
             addView(button("Xuất CSV") { export(item) })
@@ -366,7 +366,11 @@ class MainActivity : Activity() {
                     }
                 })
                 addView(text("${date(item)}\n${item.optString("package")}\n${item.optString("note")}", 13f, muted))
-                addView(text("Mốc UI đã xác minh: " + listOf("COLD", "WARM", "HOT").joinToString("  •  ") { "$it ${LaunchResult.median(item.readyValues(it))?.let { v -> ms(v) } ?: "—"}" }, 14f))
+                listOf("COLD", "WARM", "HOT").forEach { mode ->
+                    val cohort = if (item.readyValues(mode).isNotEmpty()) MeasurementCohort.AUTOMATIC else MeasurementCohort.ASSISTED
+                    val stats = SampleStatistics.of(item.cohortValues(mode, cohort))
+                    addView(text("$mode · TB ${stats.mean?.let { ms(it) } ?: "chưa có số liệu"} · ${stats.count} mẫu · ${cohort.label}", 14f))
+                }
                 addView(button("Xem phiên đo") {
                     content.removeAllViews(); content.addView(button("← Lịch sử") { render() }); renderSummary(item)
                 })
