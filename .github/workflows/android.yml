@@ -14,9 +14,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - name: Set up Android SDK 35
+        uses: android-actions/setup-android@v3
+        with:
+          # Match the command-line tools verified in the development environment.
+          cmdline-tools-version: '11076708'
+          # Do not request the obsolete SDK "tools" package used by the action default.
+          packages: 'platforms;android-35 build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Test, lint and build APK
+        run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
           name: startup-bench-debug
