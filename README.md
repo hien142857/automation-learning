@@ -24,10 +24,12 @@ Nếu kết nối quá 15 giây, công cụ hiển thị lỗi thay vì chờ v�
 
 - Dùng `am start -W --user <current-user> -n <launcher-component>` với quyền shell từ Shizuku UserService. Chỉ truyền danh sách đối số đã kiểm tra, không chạy chuỗi shell tùy ý.
 - **Cold:** force-stop package, chờ 1.5 giây, đo mở Activity.
-- **Warm:** mở app để chuẩn bị, HOME, chờ 1.5 giây, đo với `--activity-clear-task --activity-new-task`. Đây là kịch bản tái tạo task / Activity, không mô phỏng mọi đường quay lại app.
+- **Warm:** mở app để chuẩn bị, HOME, chờ 1.5 giây, đo với `-f 0x10008000` (`FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_CLEAR_TASK`). Android không có tùy chọn shell `--activity-new-task`. Đây là kịch bản tái tạo task / Activity, không mô phỏng mọi đường quay lại app.
 - **Hot:** mở app để chuẩn bị, HOME, chờ 1.5 giây, đo đưa launcher Activity trở lại.
+- Bước HOME trong Warm / Hot là chủ động. Công cụ sẽ mở lại app sau khoảng chờ; việc về Home ở bước này chưa đủ để kết luận app đích crash. Nếu app tự đóng sau khi đã mở lại, cần log crash của app đích để chẩn đoán.
 - Có khoảng nghỉ 1.5 giây giữa các mẫu. App có launcher điều hướng / trampoline / nhiều task có thể không cho trạng thái mong muốn.
 - Mẫu chỉ hợp lệ nếu Android trả `Status: ok`, `LaunchState` đúng yêu cầu và `TotalTime >= 0`. Trạng thái sai, thiếu thời gian, timeout, mất quyền là lỗi được giữ trong log, **không tính vào median/min/max**. Không thay TotalTime bằng WaitTime, không coi thiếu thời gian là 0. Hot có thể không có số đo hợp lệ trên một số ROM.
+- Từ bản 0.1.2: lỗi lệnh chỉ bỏ phần còn lại của kiểu đo đó và tiếp tục kiểu kế tiếp. Mất kết nối, lỗi quyền hoặc khóa màn hình dừng toàn phiên. Phiên đã kết thúc nhưng có mẫu lỗi mang trạng thái `completed_with_errors`; các mẫu chưa chạy hiển thị rõ, không coi là 0 ms. Log đầy đủ ở Chi tiết / CSV; thông báo ngoài màn hình được rút gọn, kể cả lịch sử từ bản cũ.
 - Đây là thời gian Activity Manager báo cho quá trình mở Activity. Không phải đo hoàn tất request mạng, tải dữ liệu, hoặc fully drawn / fully interactive của mọi ứng dụng. Những chỉ số đó cần app đích được instrument hoặc có kịch bản automation riêng.
 - Cold là process cold, không xóa disk cache / page cache và không phải lần cài đặt / mở app đầu tiên.
 - Đo khi màn hình mở khóa, cùng thiết bị, trạng thái pin, nhiệt độ, cấu hình mạng và dữ liệu app. Không chạy cùng profiler / tác vụ nặng. Đây là công cụ so sánh hỗ trợ tester, chưa thay thế Android Macrobenchmark hoặc Perfetto cho kết luận hiệu năng chính thức.
@@ -67,4 +69,4 @@ APK debug dành cho thử nghiệm nội bộ. Chưa có signing / cấu hình p
 - So sánh cùng package: chênh lệch là đối chứng trừ mốc; phiên không có mẫu không xuất phần trăm. Khác thiết bị / build / quy trình có cảnh báo.
 - Xuất CSV, mở lại kiểm tra log nhiều dòng và ký tự tiếng Việt.
 
-Unit tests kiểm tra parser số đo, lỗi trạng thái, thiếu / âm TotalTime, 0 ms thực, line endings và median. Build / unit tests trên cloud không xác minh quyền Shizuku, hành vi ROM hoặc độ chính xác trên phần cứng thật.
+Unit tests kiểm tra parser số đo, lỗi trạng thái, thiếu / âm TotalTime, 0 ms thực, line endings, median, điều kiện bật nút, cờ Intent cho Warm và xử lý log lỗi dài / tiếp tục kiểu đo sau lỗi lệnh. Build / unit tests trên cloud không xác minh quyền Shizuku, hành vi ROM hoặc độ chính xác trên phần cứng thật.

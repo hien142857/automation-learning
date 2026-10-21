@@ -74,7 +74,7 @@ object BenchEngine {
             put("device", "${Build.MANUFACTURER} ${Build.MODEL}"); put("android", Build.VERSION.RELEASE)
             put("sdk", Build.VERSION.SDK_INT); put("fingerprint", Build.FINGERPRINT)
             put("component", component); put("repeats", repeats); put("modes", JSONArray(modes))
-            put("protocol", "am-start-W-v1; settle=1500ms; inter-sample=1500ms; warm=clear-task")
+            put("protocol", "am-start-W-v2; settle=1500ms; inter-sample=1500ms; warm=flags-0x10008000")
             put("status", "running"); put("samples", JSONArray())
             val battery = app.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
             put("batteryLevel", battery?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1)
@@ -89,6 +89,7 @@ object BenchEngine {
         executor.execute {
             val history = History(app)
             var stopReason = ""
+            var hasErrors = false
             try {
                 history.save(item)
                 for (mode in modes) {
@@ -98,35 +99,49 @@ object BenchEngine {
                             app.getSystemService(KeyguardManager::class.java).isKeyguardLocked) {
                             cancel = true; stopReason = "Màn hình tắt hoặc bị khóa."; break
                         }
-                        progress = "$mode · lần $index/$repeats"
+                        progress = "$mode · lần $index/$repeats" +
+                            if (mode == "COLD") " · đang mở app" else " · app sẽ về Home rồi mở lại để chuẩn bị"
                         RunService.update(app, progress)
                         var raw = try { remote?.measure(component, mode, Process.myUid() / 100000)
-                            ?: "BenchError: Mất kết nối Shizuku" }
-                        catch (e: Exception) { remote = null; "BenchError: ${e.message}" }
+                            ?: "BenchError: Mất kết nối Shizuku\nBenchErrorType: CONNECTION" }
+                        catch (e: Exception) {
+                            remote = null
+                            "BenchError: Mất kết nối dịch vụ đo.\nBenchErrorType: CONNECTION\n${e.stackTraceToString().take(8000)}"
+                        }
                         if (!app.getSystemService(PowerManager::class.java).isInteractive ||
                             app.getSystemService(KeyguardManager::class.java).isKeyguardLocked) {
-                            raw = "BenchError: Màn hình tắt hoặc bị khóa trong khi đo\n$raw"
+                            raw = "BenchError: Màn hình tắt hoặc bị khóa trong khi đo\nBenchErrorType: SCREEN\n$raw"
                         }
                         synchronized(item) {
                             item.getJSONArray("samples").put(JSONObject().put("mode", mode).put("raw", raw))
                             history.save(item)
                         }
-                        if (raw.startsWith("BenchError:")) { cancel = true; stopReason = raw.lineSequence().first().removePrefix("BenchError: "); break }
+                        if (!LaunchResult.parse(mode, raw).valid) hasErrors = true
+                        if (raw.startsWith("BenchError:")) {
+                            if (MeasurementFailure.stopsSession(raw, remote?.asBinder()?.isBinderAlive == true)) {
+                                cancel = true; stopReason = MeasurementFailure.short(raw)
+                            }
+                            // A command error skips the remaining repetitions of this mode, not the next mode.
+                            break
+                        }
                         if (!cancel) Thread.sleep(1500)
                     }
                     if (cancel) break
                 }
-                item.put("status", if (cancel) "stopped" else "completed")
+                item.put("status", if (cancel) "stopped" else if (hasErrors) "completed_with_errors" else "completed")
                 item.put("stopReason", stopReason)
-                progress = if (cancel) "Đã dừng. ${stopReason.ifEmpty { "Theo yêu cầu người dùng." }} Các mẫu đã đo được giữ lại." else "Đã đo xong và lưu lịch sử."
+                progress = if (cancel) "Đã dừng. ${stopReason.ifEmpty { "Theo yêu cầu người dùng." }} Các mẫu đã đo được giữ lại."
+                    else if (hasErrors) "Đã kết thúc phiên đo, có mẫu lỗi. Xem Chi tiết từng lần / log Android."
+                    else "Đã đo xong và lưu lịch sử."
             } catch (e: Exception) {
-                item.put("status", "error"); progress = "Phiên đo lỗi: ${e.message}"
+                item.put("status", "error"); item.put("errorDetail", e.stackTraceToString().take(8000))
+                progress = "Phiên đo lỗi: ${MeasurementFailure.short(e.message ?: e.javaClass.simpleName)}"
             } finally {
-                try { history.save(item) } finally {
-                    history.close(); running = false
-                    RunService.update(app, progress, done = true)
-                    app.stopService(runIntent)
-                }
+                runCatching { history.save(item) }.onFailure { progress = "Không lưu được phiên đo. Kiểm tra dung lượng trống của thiết bị." }
+                runCatching { history.close() }
+                running = false
+                RunService.update(app, progress, done = true)
+                runCatching { app.stopService(runIntent) }
             }
         }
     }

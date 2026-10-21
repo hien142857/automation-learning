@@ -52,7 +52,8 @@ class MainActivity : Activity() {
     private val tick = object : Runnable {
         override fun run() {
             refreshReadiness()
-            progressText?.text = BenchEngine.progress.ifEmpty { "Sẵn sàng. Màn hình cần mở khóa trong suốt phiên đo." }
+            progressText?.text = BenchEngine.progress.takeIf { it.isNotBlank() }?.let { MeasurementFailure.short(it) }
+                ?: "Sẵn sàng. Màn hình cần mở khóa trong suốt phiên đo."
             if (wasRunning && !BenchEngine.running) render()
             wasRunning = BenchEngine.running
             handler.postDelayed(this, 1000)
@@ -136,7 +137,7 @@ class MainActivity : Activity() {
         setContentView(root)
         window.insetsController?.setSystemBarsAppearance(0,
             android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
-        root.addView(text("STARTUP BENCH", 12f, accent).apply { letterSpacing = .18f })
+        root.addView(text("STARTUP BENCH · ${BuildConfig.VERSION_NAME}", 12f, accent).apply { letterSpacing = .12f })
         root.addView(text(if (tab == 0) "Đo khởi động ứng dụng" else "Lịch sử & đối chứng", 26f).apply { setTypeface(null, Typeface.BOLD) })
         val nav = LinearLayout(this)
         nav.addView(button("Đo startup") { tab = 0; render() }, LinearLayout.LayoutParams(0, -2, 1f))
@@ -183,7 +184,9 @@ class MainActivity : Activity() {
             addView(text("Cold sẽ force-stop app; Warm sẽ xóa task đang mở. Hãy lưu công việc trong app đích trước khi đo.", 13f, muted))
             readinessText = text("Đang kiểm tra điều kiện đo…", 14f, accent); addView(readinessText)
             startButton = button("Bắt đầu đo & lưu phiên") { startRun() }.apply { isEnabled = false }; addView(startButton)
-            progressText = text(BenchEngine.progress, 14f, accent); addView(progressText)
+            progressText = text(BenchEngine.progress.takeIf { it.isNotBlank() }?.let { MeasurementFailure.short(it) } ?: "", 14f, accent).apply {
+                maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END
+            }; addView(progressText)
             if (BenchEngine.running) addView(button("Dừng sau mẫu hiện tại") { BenchEngine.cancel = true; message("Sẽ dừng sau khi lệnh đang chạy kết thúc.") })
         }
         card {
@@ -269,14 +272,37 @@ class MainActivity : Activity() {
     private fun renderSummary(item: JSONObject) {
         card {
             addView(text("${item.optString("label")} · ${item.optString("version")} (${item.optLong("versionCode")})", 18f))
-            addView(text("${item.optString("device")} · Android ${item.optString("android")}\n${date(item)} · ${item.optString("status")}\n${item.optString("note")}", 12f, muted))
+            val status = when (item.optString("status")) {
+                "completed" -> "Hoàn tất"
+                "completed_with_errors" -> "Đã kết thúc, có mẫu lỗi"
+                "stopped" -> "Đã dừng trước khi hoàn tất"
+                "error" -> "Phiên đo gặp lỗi"
+                else -> "Đang chạy hoặc chưa hoàn tất"
+            }
+            addView(text("${item.optString("device")} · Android ${item.optString("android")}\n${date(item)} · $status\n${item.optString("note")}", 12f, muted))
             addView(text("Pin ${item.optInt("batteryLevel", -1)}% · ${item.optInt("batteryTempTenthsC", -1) / 10.0}°C · tiết kiệm pin: ${item.optBoolean("powerSave")}", 12f, muted))
             listOf("COLD", "WARM", "HOT").forEach { mode ->
                 val values = item.values(mode)
-                val total = item.results().count { it.mode == mode }
+                val results = item.results().filter { it.mode == mode }
+                val total = results.size
                 addView(text("$mode   ${LaunchResult.median(values)?.let { ms(it) } ?: "—"}", 23f, accent))
-                addView(text("${values.size}/$total mẫu hợp lệ" + if (values.isNotEmpty()) " · min ${values.min()} / max ${values.max()} ms" else "", 12f, muted))
-                if (values.isNotEmpty()) addView(SampleChart(this@MainActivity, values, accent), LinearLayout.LayoutParams(-1, dp(64)))
+                val requested = item.optJSONArray("modes")?.let { a -> (0 until a.length()).any { a.optString(it) == mode } } ?: true
+                val count = when {
+                    !requested -> "Không chọn kiểu đo này"
+                    total == 0 -> "Chưa chạy"
+                    else -> "${values.size}/$total mẫu đã chạy hợp lệ · dự kiến ${item.optInt("repeats", total)} lần"
+                }
+                addView(text(count, 12f, muted))
+                if (values.isNotEmpty()) {
+                    addView(text("Min ${values.min()} · max ${values.max()} ms", 12f, muted))
+                    addView(SampleChart(this@MainActivity, values, accent), LinearLayout.LayoutParams(-1, dp(90)))
+                    addView(text("Thứ tự các mẫu hợp lệ · thang 0–${values.max()} ms", 12f, muted))
+                }
+                results.firstOrNull { !it.valid }?.let { result ->
+                    addView(text(MeasurementFailure.short(result.error ?: result.raw), 13f, Color.rgb(255, 185, 160)).apply {
+                        maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END
+                    })
+                }
             }
             addView(button("Chi tiết từng lần / log Android") { details(item) })
             addView(button("Xuất CSV") { export(item) })
@@ -319,7 +345,7 @@ class MainActivity : Activity() {
             append("Mốc: ${base.optString("version")} (${base.optLong("versionCode")}) · ${date(base)}\n")
             append("Đối chứng: ${candidate.optString("version")} (${candidate.optLong("versionCode")}) · ${date(candidate)}\n\n")
             if (warning.isNotEmpty()) append("⚠ Khác thiết bị / hệ điều hành / quy trình / Activity; hạn chế khả năng so sánh.\n\n")
-            if (base.optString("status") != "completed" || candidate.optString("status") != "completed") append("⚠ Có phiên chưa hoàn tất.\n\n")
+            if (base.optString("status") != "completed" || candidate.optString("status") != "completed") append("⚠ Có phiên chưa hoàn tất hoặc có mẫu lỗi.\n\n")
             listOf("COLD", "WARM", "HOT").forEach { mode ->
                 val a = LaunchResult.median(base.values(mode)); val b = LaunchResult.median(candidate.values(mode))
                 append("$mode: ")
@@ -337,7 +363,7 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("So sánh median").setMessage(result).setPositiveButton("Đóng", null).show()
     }
     private fun details(item: JSONObject) {
-        val body = text(item.results().mapIndexed { index, r ->
+        val body = text(item.optString("errorDetail").let { if (it.isBlank()) "" else "$it\n\n" } + item.results().mapIndexed { index, r ->
             "#${index + 1} ${r.mode} · ${if (r.valid) "${r.totalMs} ms" else "KHÔNG HỢP LỆ: ${r.error}"}\n${r.raw}"
         }.joinToString("\n\n"), 13f, Color.BLACK).apply { setTextIsSelectable(true); setPadding(dp(18), 0, dp(18), 0) }
         AlertDialog.Builder(this).setTitle("Mẫu đo · log gốc").setView(ScrollView(this).apply { addView(body) }).setPositiveButton("Đóng", null).show()
