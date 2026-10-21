@@ -1,3 +1,8 @@
 <resources>
     <string name="compare_session">So sánh · %1$s %2$s</string>
+    <string name="loading_apps">Đang tải danh sách ứng dụng…</string>
+    <string name="load_apps_failed">Không tải được danh sách ứng dụng. Hãy thử lại.</string>
+    <string name="no_matching_apps">Không tìm thấy ứng dụng phù hợp.</string>
+    <string name="retry">Thử lại</string>
+    <string name="comparison_rules">Nhận xét tham khảo: ít nhất 5 mẫu hợp lệ mỗi phiên; xét ngưỡng 5%, 10 ms và độ dao động. Đây chưa phải kết luận thống kê.</string>
 </resources>

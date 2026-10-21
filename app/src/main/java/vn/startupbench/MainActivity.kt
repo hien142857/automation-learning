@@ -43,6 +43,7 @@ class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private var wasRunning = false
     private var pendingCsv = ""
+    private var appPicker: AppPickerDialog? = null
     private val permissionListener = Shizuku.OnRequestPermissionResultListener { _, result ->
         runOnUiThread {
             if (result == PackageManager.PERMISSION_GRANTED) BenchEngine.connect(this, retry = true)
@@ -76,7 +77,7 @@ class MainActivity : Activity() {
     }
     override fun onResume() { super.onResume(); handler.post(tick) }
     override fun onPause() { super.onPause(); handler.removeCallbacks(tick) }
-    override fun onDestroy() { Shizuku.removeRequestPermissionResultListener(permissionListener); super.onDestroy() }
+    override fun onDestroy() { appPicker?.dismiss(); Shizuku.removeRequestPermissionResultListener(permissionListener); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         out.putString("package", selectedPackage); out.putString("note", note); out.putInt("repeats", repeats)
         out.putStringArrayList("modes", ArrayList(modes)); out.putInt("tab", tab); out.putString("csv", pendingCsv)
@@ -139,13 +140,37 @@ class MainActivity : Activity() {
             android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
         root.addView(text("STARTUP BENCH · ${BuildConfig.VERSION_NAME}", 12f, accent).apply { letterSpacing = .12f })
         root.addView(text(if (tab == 0) "Đo khởi động ứng dụng" else "Lịch sử & đối chứng", 26f).apply { setTypeface(null, Typeface.BOLD) })
-        val nav = LinearLayout(this)
-        nav.addView(button("Đo startup") { tab = 0; render() }, LinearLayout.LayoutParams(0, -2, 1f))
-        nav.addView(button("Lịch sử") { tab = 1; render() }, LinearLayout.LayoutParams(0, -2, 1f))
-        root.addView(nav)
         content = column().apply { setPadding(0, dp(14), 0, dp(24)) }
         root.addView(ScrollView(this).apply { addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(navigationBar())
         if (tab == 0) renderMeasure() else renderHistory()
+    }
+    private fun navigationBar(): View {
+        val nav = RadioGroup(this).apply {
+            orientation = RadioGroup.HORIZONTAL; contentDescription = "Điều hướng chính"
+            setPadding(dp(4), dp(6), dp(4), dp(6)); background = shape(surface)
+        }
+        val ids = listOf(View.generateViewId(), View.generateViewId())
+        listOf("Đo startup" to android.R.drawable.ic_media_play, "Lịch sử" to android.R.drawable.ic_menu_recent_history).forEachIndexed { index, (label, icon) ->
+            nav.addView(RadioButton(this).apply {
+                id = ids[index]; buttonDrawable = null
+                text = label; textSize = 13f; gravity = android.view.Gravity.CENTER; minHeight = dp(68)
+                setPadding(dp(8), dp(6), dp(8), dp(6)); setTextColor(if (tab == index) accent else muted)
+                setTypeface(null, if (tab == index) Typeface.BOLD else Typeface.NORMAL)
+                background = shape(if (tab == index) Color.rgb(33, 65, 69) else Color.TRANSPARENT)
+                val drawable = getDrawable(icon)!!.mutate().apply { setTint(if (tab == index) accent else muted) }
+                drawable.setBounds(0, 0, dp(24), dp(24))
+                setCompoundDrawables(null, drawable, null, null); compoundDrawablePadding = dp(4)
+                stateDescription = if (tab == index) "Đang chọn" else "Chưa chọn"
+                if (tab == index) setOnClickListener { render() }
+            }, RadioGroup.LayoutParams(0, -2, 1f))
+        }
+        nav.check(ids[tab])
+        nav.setOnCheckedChangeListener { _, id ->
+            val next = ids.indexOf(id)
+            if (next >= 0 && tab != next) { tab = next; render() }
+        }
+        return nav
     }
     private fun renderMeasure() {
         card {
@@ -221,30 +246,9 @@ class MainActivity : Activity() {
         }
     }
     private fun chooseApp() {
-        val search = input("Tìm tên app hoặc package", "") { }
-        val list = ListView(this)
-        val apps = packageManager.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
-            .filter { it.activityInfo.packageName !in listOf(packageName, "moe.shizuku.privileged.api") }
-            .distinctBy { it.activityInfo.packageName }.sortedBy { it.loadLabel(packageManager).toString().lowercase() }
-        var visible = apps
-        fun update(query: String) {
-            visible = apps.filter { it.loadLabel(packageManager).toString().contains(query, true) || it.activityInfo.packageName.contains(query, true) }
-            list.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1,
-                visible.map { "${it.loadLabel(packageManager)}\n${it.activityInfo.packageName}" })
-        }
-        update("")
-        search.setTextColor(Color.BLACK); search.setHintTextColor(Color.GRAY)
-        search.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { update(s.toString()) }
-            override fun afterTextChanged(s: Editable?) = Unit
-        })
-        val body = column().apply { addView(search); addView(list, LinearLayout.LayoutParams(-1, dp(380))) }
-        val dialog = AlertDialog.Builder(this).setTitle("Chọn ứng dụng (${apps.size})").setView(body).setNegativeButton("Đóng", null).create()
-        list.setOnItemClickListener { _, _, position, _ ->
-            selectedPackage = visible[position].activityInfo.packageName; packageInput?.setText(selectedPackage); dialog.dismiss()
-        }
-        dialog.show()
+        appPicker?.dismiss()
+        appPicker = AppPickerDialog(this, onSelect = { pkg -> selectedPackage = pkg; packageInput?.setText(pkg) })
+        appPicker?.show()
     }
     private fun startRun() {
         val state = refreshReadiness()
@@ -332,6 +336,7 @@ class MainActivity : Activity() {
     }
     private fun addHistoryHeader(sessions: List<JSONObject>) {
         content.addView(text("${sessions.size} phiên đã lưu trên thiết bị · chọn 2 phiên để đối chứng", 13f, muted))
+        content.addView(text("Chọn đầu tiên = A (mốc), chọn tiếp theo = B (đối chứng). Có thể đổi A/B ở màn so sánh.", 12f, muted))
         content.addView(button("So sánh hai phiên đã chọn") {
             val pair = compared.mapNotNull { id -> sessions.find { it.getString("id") == id } }
             if (pair.size != 2) message("Chọn hai phiên trong lịch sử.")
@@ -340,27 +345,7 @@ class MainActivity : Activity() {
     }
     private fun compare(base: JSONObject, candidate: JSONObject) {
         if (base.getString("package") != candidate.getString("package")) { message("Hãy chọn hai phiên của cùng package."); return }
-        val warning = listOf("fingerprint", "protocol", "component", "powerSave", "plugged").filter { base.optString(it) != candidate.optString(it) }
-        val result = buildString {
-            append("Mốc: ${base.optString("version")} (${base.optLong("versionCode")}) · ${date(base)}\n")
-            append("Đối chứng: ${candidate.optString("version")} (${candidate.optLong("versionCode")}) · ${date(candidate)}\n\n")
-            if (warning.isNotEmpty()) append("⚠ Khác thiết bị / hệ điều hành / quy trình / Activity; hạn chế khả năng so sánh.\n\n")
-            if (base.optString("status") != "completed" || candidate.optString("status") != "completed") append("⚠ Có phiên chưa hoàn tất hoặc có mẫu lỗi.\n\n")
-            listOf("COLD", "WARM", "HOT").forEach { mode ->
-                val a = LaunchResult.median(base.values(mode)); val b = LaunchResult.median(candidate.values(mode))
-                append("$mode: ")
-                if (a == null || b == null) append("thiếu mẫu hợp lệ\n")
-                else {
-                    val delta = b - a
-                    append("${ms(a)} → ${ms(b)}\n${if (delta > 0) "+" else ""}${ms(delta)}")
-                    if (a > 0) append(String.format(Locale.US, " (%+.1f%%)", delta / a * 100))
-                    append(if (delta > 0) " · chậm hơn\n" else if (delta < 0) " · nhanh hơn\n" else " · bằng nhau\n")
-                    append("Mẫu hợp lệ: ${base.values(mode).size} → ${candidate.values(mode).size}\n\n")
-                }
-            }
-            append("Dùng cùng thiết bị, pin/nhiệt độ và điều kiện mạng. Chênh lệch nhỏ chưa đủ kết luận hồi quy.")
-        }
-        AlertDialog.Builder(this).setTitle("So sánh median").setMessage(result).setPositiveButton("Đóng", null).show()
+        ComparisonScreen(this, content) { render() }.show(base, candidate)
     }
     private fun details(item: JSONObject) {
         val body = text(item.optString("errorDetail").let { if (it.isBlank()) "" else "$it\n\n" } + item.results().mapIndexed { index, r ->

@@ -20,6 +20,15 @@ Từ bản 0.1.1, nút bị khóa có màu xám và hiện lý do ngay phía tr�
 
 Nếu kết nối quá 15 giây, công cụ hiển thị lỗi thay vì chờ vô hạn. Bấm **Kết nối / hướng dẫn** để gỡ phiên dịch vụ cũ và khởi tạo lại. Nếu vẫn không kết nối, kiểm tra quyền Startup Bench trong Shizuku → Authorized applications, khởi động lại Shizuku rồi mở lại công cụ. Cần kiểm tra log trên thiết bị để xác định lỗi khởi chạy dịch vụ cụ thể; thông báo timeout không tự xác định nguyên nhân.
 
+### Điều hướng, chọn app và nhận xét so sánh (0.1.3)
+
+- Thanh điều hướng dưới cùng có icon và trạng thái đang chọn cho **Đo startup** / **Lịch sử**. Hai mục này chuyển màn hình, tách biệt với các nút thực hiện thao tác.
+- Popup chọn app mở ngay với vòng xoay loading. Việc đọc app và tên hiển thị chạy trên luồng nền; tìm kiếm dùng tên / package đã tải, không đọc lại toàn bộ danh sách mỗi ký tự. Có trạng thái trống, thử lại khi lỗi; đóng popup hủy tác vụ và bỏ qua kết quả đến muộn.
+- Chọn hai phiên cùng package: phiên chọn đầu là **A · Mốc**, phiên thứ hai là **B · Đối chứng**. Màn so sánh có màu riêng cho A/B, thanh thời gian chung thang cho từng kiểu đo và nút **Đổi A ↔ B**. Chênh lệch = median B trừ A; âm là B nhanh hơn. Màu xanh/đỏ đi kèm chữ và mũi tên để không phụ thuộc vào màu sắc.
+- Nhận xét tối ưu là gợi ý thận trọng, không phải kiểm định thống kê: cần tối thiểu 5 mẫu hợp lệ mỗi bên, đủ lượt và không có lỗi ở kiểu đo đang xét, cùng metadata thiết bị / Android / Activity / quy trình / chế độ nguồn. Nhiệt độ đầu phiên lệch từ 3°C cũng tạo cảnh báo khác điều kiện.
+- Chỉ nêu dấu hiệu nhanh/chậm khi chênh lệch đạt cả 5% và 10 ms, đồng thời lớn hơn 2 lần MAD lớn nhất của hai nhóm (median độ lệch tuyệt đối so với median). Chênh lệch nhỏ, dao động lớn, thiếu mẫu, mốc 0 ms hoặc khác điều kiện sẽ có lời khuyên đo lại thay vì khẳng định tối ưu. Một kiểu đo chậm hơn ngăn kết luận tối ưu đồng đều.
+- Nên đo lại 10 lần với cùng dữ liệu app, nhiệt độ, nguồn và mạng; cải thiện startup không đại diện cho tốc độ tải dữ liệu hoàn tất.
+
 ## Số đo và giới hạn
 
 - Dùng `am start -W --user <current-user> -n <launcher-component>` với quyền shell từ Shizuku UserService. Chỉ truyền danh sách đối số đã kiểm tra, không chạy chuỗi shell tùy ý.
@@ -69,4 +78,4 @@ APK debug dành cho thử nghiệm nội bộ. Chưa có signing / cấu hình p
 - So sánh cùng package: chênh lệch là đối chứng trừ mốc; phiên không có mẫu không xuất phần trăm. Khác thiết bị / build / quy trình có cảnh báo.
 - Xuất CSV, mở lại kiểm tra log nhiều dòng và ký tự tiếng Việt.
 
-Unit tests kiểm tra parser số đo, lỗi trạng thái, thiếu / âm TotalTime, 0 ms thực, line endings, median, điều kiện bật nút, cờ Intent cho Warm và xử lý log lỗi dài / tiếp tục kiểu đo sau lỗi lệnh. Build / unit tests trên cloud không xác minh quyền Shizuku, hành vi ROM hoặc độ chính xác trên phần cứng thật.
+Unit tests kiểm tra parser số đo, lỗi trạng thái, thiếu / âm TotalTime, 0 ms thực, line endings, median, điều kiện bật nút, cờ Intent cho Warm và xử lý log lỗi dài / tiếp tục kiểu đo sau lỗi lệnh. Kiểm thử nhận xét so sánh bao gồm đảo A/B, thiếu mẫu, dao động, khác điều kiện, mốc 0 và kết quả trái chiều giữa các kiểu đo. Robolectric kiểm tra chuyển tab, loading trong khi tác vụ nền chưa hoàn tất và màu / nhận xét sau khi đổi A/B. Build và các kiểm thử này không xác minh quyền Shizuku, hành vi ROM hoặc độ chính xác trên phần cứng thật.
