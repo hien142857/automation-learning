@@ -21,11 +21,53 @@ class History(context: Context) : SQLiteOpenHelper(context, "history.db", null, 
     }
 }
 
-fun JSONObject.results(): List<LaunchResult> {
+fun JSONObject.androidResults(): List<LaunchResult> {
     val samples = optJSONArray("samples") ?: JSONArray()
     return (0 until samples.length()).map { i ->
         val sample = samples.getJSONObject(i)
         LaunchResult.parse(sample.getString("mode"), sample.getString("raw"))
+    }
+}
+
+fun JSONObject.results(): List<LaunchResult> {
+    val samples = optJSONArray("samples") ?: JSONArray()
+    return androidResults().mapIndexed { index, result ->
+        val proof = samples.getJSONObject(index).optJSONObject("evidence")
+        if (!result.stateVerified) result
+        else if (EvidencePolicy.launchAccepted(proof, result.raw)) result.copy(error = null, uiVerified = true)
+        else result.copy(error = when (proof?.optString("status")) {
+            "assisted_ui" -> "Có ads/thao tác: lưu riêng, không dùng trong nhóm tự động."
+            "timeout" -> "Không thấy mốc UI trước timeout; không chứng minh đã qua Splash."
+            "rejected_by_tester" -> "Tester từ chối xác nhận màn hình đích."
+            else -> "Chưa có bằng chứng mốc UI và xác nhận hợp lệ."
+        })
+    }
+}
+
+fun JSONObject.readyValues(mode: String): List<Long> {
+    val samples = optJSONArray("samples") ?: JSONArray()
+    return androidResults().mapIndexedNotNull { index, result ->
+        val proof = samples.getJSONObject(index).optJSONObject("evidence")
+        if (result.mode == mode && result.stateVerified && EvidencePolicy.launchAccepted(proof, result.raw))
+            proof!!.getLong("firstMatchUptimeMs") - proof.getLong("launchUptimeMs") else null
+    }
+}
+
+fun JSONObject.assistedValues(mode: String): List<Long> {
+    val samples = optJSONArray("samples") ?: JSONArray()
+    return androidResults().mapIndexedNotNull { index, result ->
+        val proof = samples.getJSONObject(index).optJSONObject("evidence")
+        if (result.mode == mode && result.stateVerified && EvidencePolicy.launchAssisted(proof, result.raw))
+            proof!!.getLong("firstMatchUptimeMs") - proof.getLong("launchUptimeMs") else null
+    }
+}
+
+fun JSONObject.observationIntervals(mode: String): List<Long> {
+    val samples = optJSONArray("samples") ?: JSONArray()
+    return androidResults().mapIndexedNotNull { index, result ->
+        val proof = samples.getJSONObject(index).optJSONObject("evidence")
+        if (result.mode == mode && result.stateVerified && EvidencePolicy.launchAccepted(proof, result.raw))
+            proof!!.getLong("firstMatchUptimeMs") - maxOf(proof.getLong("launchUptimeMs"), proof.getLong("lastMissingUptimeMs")) else null
     }
 }
 

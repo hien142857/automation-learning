@@ -41,7 +41,7 @@ class ComparisonScreen(private val activity: Activity, private val content: Line
             samples.size >= item.optInt("repeats", 1) && samples.all { it.valid }
     }
     fun show(base: JSONObject, candidate: JSONObject) {
-        val fields = linkedMapOf("fingerprint" to "thiết bị / Android", "protocol" to "quy trình đo", "component" to "Activity", "powerSave" to "tiết kiệm pin", "plugged" to "trạng thái sạc")
+        val fields = linkedMapOf("fingerprint" to "thiết bị / Android", "protocol" to "quy trình đo", "component" to "Activity", "powerSave" to "tiết kiệm pin", "plugged" to "trạng thái sạc", "readinessCriterion" to "mốc UI")
         val warnings = fields.mapNotNull { (key, label) ->
             when { !base.has(key) || !candidate.has(key) -> "Thiếu thông tin $label"
                 base.optString(key) != candidate.optString(key) -> "Khác $label"
@@ -50,13 +50,14 @@ class ComparisonScreen(private val activity: Activity, private val content: Line
         if (base.optInt("batteryTempTenthsC", -1) >= 0 && candidate.optInt("batteryTempTenthsC", -1) >= 0 &&
             kotlin.math.abs(base.optInt("batteryTempTenthsC") - candidate.optInt("batteryTempTenthsC")) >= 30) warnings.add("Nhiệt độ đầu phiên lệch từ 3°C")
         val assessments = listOf("COLD", "WARM", "HOT").associateWith { mode ->
-            ComparisonAssessment.assess(base.values(mode), candidate.values(mode), warnings.isEmpty(), complete(base, mode) && complete(candidate, mode))
+            ComparisonAssessment.assess(base.readyValues(mode), candidate.readyValues(mode), warnings.isEmpty(), complete(base, mode) && complete(candidate, mode),
+                maxOf(base.observationIntervals(mode).maxOrNull()?.toDouble() ?: 0.0, candidate.observationIntervals(mode).maxOrNull()?.toDouble() ?: 0.0))
         }
         content.removeAllViews()
         content.addView(action("← Quay lại lịch sử", onBack))
         content.addView(text("So sánh phiên đo", 24f).apply { setTypeface(null, Typeface.BOLD) })
         content.addView(text(base.optString("label") + " · " + base.optString("package"), 14f, muted))
-        content.addView(text("Thời gian thấp hơn là nhanh hơn · so sánh median", 13f, muted))
+        content.addView(text("Median thời gian QUAN SÁT mốc UI · chỉ nhóm có xác nhận, không ads/thao tác. Không phải TTFD chuẩn.", 13f, muted))
         val sessions = LinearLayout(activity)
         listOf(Triple(base, "A · MỐC", baselineColor), Triple(candidate, "B · ĐỐI CHỨNG", candidateColor)).forEach { (item, label, color) ->
             sessions.addView(column().apply {
@@ -106,7 +107,9 @@ class ComparisonScreen(private val activity: Activity, private val content: Line
                 val percentage = result.percent?.let { String.format(Locale.US, " (%+.1f%%)", it) } ?: " · không tính % từ mốc 0 ms"
                 addView(text("$change\n${String.format(Locale.US, "%+.1f ms", delta)}$percentage", 18f, changeColor))
             }
-            addView(text("Mẫu hợp lệ: A ${base.values(mode).size} · B ${candidate.values(mode).size}", 12f, muted))
+            addView(text("Mẫu xác minh tự động: A ${base.readyValues(mode).size} · B ${candidate.readyValues(mode).size}", 12f, muted))
+            addView(text("Khoảng quan sát median: A ${LaunchResult.median(base.observationIntervals(mode))?.let { ms(it) } ?: "—"} · B ${LaunchResult.median(candidate.observationIntervals(mode))?.let { ms(it) } ?: "—"}", 12f, muted))
+            addView(text("Nhận xét còn xét khoảng quan sát lớn nhất để tránh kết luận từ độ trễ phát hiện mốc.", 12f, muted))
             val verdictColor = when (result.verdict) { ComparisonVerdict.IMPROVED -> fasterColor; ComparisonVerdict.REGRESSED -> slowerColor; else -> cautionColor }
             addView(text(result.title, 17f, verdictColor).apply { setTypeface(null, Typeface.BOLD) })
             addView(text(result.advice, 14f))

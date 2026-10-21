@@ -5,4 +5,9 @@
     <string name="no_matching_apps">Không tìm thấy ứng dụng phù hợp.</string>
     <string name="retry">Thử lại</string>
     <string name="comparison_rules">Nhận xét tham khảo: ít nhất 5 mẫu hợp lệ mỗi phiên; xét ngưỡng 5%, 10 ms và độ dao động. Đây chưa phải kết luận thống kê.</string>
+    <string name="readiness_service_description">Quan sát mốc UI trong app được tester chọn, ghi nhận lần bấm và hiển thị hướng dẫn khi có quảng cáo hoặc timeout. Không ghi nội dung nhập, không chụp màn hình. Chỉ dữ liệu được xác minh mới vào nhóm so sánh tự động.</string>
+    <string name="mark_ads">Có ads / cần thao tác</string>
+    <string name="ads_instructions">Bạn có thể đóng ads hoặc xử lý màn hình chặn. Đồng hồ vẫn chạy; mẫu có thao tác sẽ lưu riêng, không dùng kết luận tốc độ thuần.</string>
+    <string name="check_ready_again">Đã xử lý, kiểm tra mốc</string>
+    <string name="drag_guidance">Startup Bench · kéo dòng này để di chuyển</string>
 </resources>

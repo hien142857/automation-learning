@@ -1,7 +1,8 @@
 package vn.startupbench
 
-data class LaunchResult(val mode: String, val state: String?, val totalMs: Long?, val waitMs: Long?, val error: String?, val raw: String) {
-    val valid: Boolean get() = error == null && totalMs != null
+data class LaunchResult(val mode: String, val state: String?, val totalMs: Long?, val waitMs: Long?, val error: String?, val raw: String,
+                        val stateVerified: Boolean = false, val uiVerified: Boolean = false) {
+    val valid: Boolean get() = error == null && (totalMs != null || uiVerified)
     companion object {
         fun parse(mode: String, output: String): LaunchResult {
             fun field(name: String) = Regex("(?m)^${Regex.escape(name)}:\\s*([^\\r\\n]+)").find(output)?.groupValues?.get(1)?.trim()
@@ -15,7 +16,8 @@ data class LaunchResult(val mode: String, val state: String?, val totalMs: Long?
                 total == null -> "Android không cung cấp TotalTime hợp lệ; không thay bằng WaitTime"
                 else -> null
             }
-            return LaunchResult(mode, state, total, wait, error, output)
+            return LaunchResult(mode, state, total, wait, error, output,
+                stateVerified = field("BenchError") == null && field("Status") == "ok" && state == mode)
         }
         fun median(values: List<Long>): Double? {
             if (values.isEmpty()) return null

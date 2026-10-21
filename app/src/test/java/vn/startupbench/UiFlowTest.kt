@@ -80,8 +80,15 @@ class UiFlowTest {
                 put("versionCode", 1); put("status", "completed"); put("repeats", 5)
                 put("fingerprint", "device"); put("protocol", "same"); put("component", "com.example/.Main")
                 put("powerSave", false); put("plugged", 0)
+                put("readinessCriterion", ReadyCriterion("com.example", "com.example:id/home", "").json())
                 put("samples", JSONArray().apply {
-                    repeat(5) { put(JSONObject().put("mode", "COLD").put("raw", "Status: ok\nLaunchState: COLD\nTotalTime: $time\n")) }
+                    repeat(5) { put(JSONObject().put("mode", "COLD").put("raw", "Status: ok\nLaunchState: COLD\nTotalTime: $time\nBenchLaunchUptimeMs: 1000\n")
+                        .put("evidence", JSONObject().put("status", "verified_ui").put("testerConfirmed", true)
+                            .put("targetPackage", "com.example").put("foregroundPackage", "com.example")
+                            .put("launchUptimeMs", 1000).put("firstMatchUptimeMs", 1000 + time)
+                            .put("lastMissingUptimeMs", 990 + time)
+                            .put("confirmedStableUptimeMs", 1500 + time).put("assisted", false).put("interrupted", false)
+                            .put("criterion", ReadyCriterion("com.example", "com.example:id/home", "").json()))) }
                 })
             }
             ComparisonScreen(activity, content) {}.show(session(100, "1"), session(80, "2"))

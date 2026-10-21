@@ -10,7 +10,7 @@ data class ComparisonAssessment(
     val verdict: ComparisonVerdict, val title: String, val advice: String
 ) {
     companion object {
-        fun assess(a: List<Long>, b: List<Long>, sameConditions: Boolean, complete: Boolean): ComparisonAssessment {
+        fun assess(a: List<Long>, b: List<Long>, sameConditions: Boolean, complete: Boolean, observationIntervalMs: Double = 0.0): ComparisonAssessment {
             val before = LaunchResult.median(a); val after = LaunchResult.median(b)
             val delta = if (before != null && after != null) after - before else null
             val percent = if (delta != null && before!! > 0) delta / before * 100 else null
@@ -22,6 +22,8 @@ data class ComparisonAssessment(
             if (a.size < 5 || b.size < 5) return result(ComparisonVerdict.INCONCLUSIVE, "Cần thêm mẫu đo", "Chạy ít nhất 5 mẫu hợp lệ ở mỗi phiên; nên dùng 10 lần để đối chứng ổn định hơn.")
             if (before == 0.0) return result(ComparisonVerdict.INCONCLUSIVE, "Mốc A bằng 0 ms", "Không tính phần trăm từ mốc 0 ms. Đo lại và kiểm tra giới hạn thời gian Android cung cấp.")
             val absolute = abs(delta!!)
+            if (absolute <= observationIntervalMs && observationIntervalMs > 0) return result(ComparisonVerdict.INCONCLUSIVE,
+                "Chênh lệch nằm trong khoảng quan sát", "Chưa phân biệt được cải thiện với độ trễ phát hiện mốc UI. Không kết luận nhanh/chậm từ chênh lệch này.")
             if (absolute < max(10.0, before * .05)) return result(ComparisonVerdict.UNCHANGED, "Chưa thấy thay đổi rõ", "Chênh lệch nhỏ hơn ngưỡng tham khảo 5% hoặc 10 ms. Chưa đủ cơ sở nói bản B đã tối ưu hơn.")
             fun mad(values: List<Long>, median: Double): Double {
                 val distances = values.map { abs(it.toDouble() - median) }.sorted()

@@ -21,25 +21,19 @@ class MeasureService : IMeasureService.Stub() {
         } finally { reader.shutdownNow() }
     }
 
-    @Synchronized override fun measure(component: String, mode: String, userId: Int): String {
-        return try {
-            val launch = LaunchCommand.start(component, mode, userId)
-            val pkg = component.substringBefore('/')
-            val user = userId.toString()
-            if (mode == "COLD") {
-                command("am", "force-stop", "--user", user, pkg)
-            } else {
-                val prep = command("am", "start", "--user", user, "-W", "-n", component)
-                if (!prep.contains("Status: ok")) throw CommandFailure(prep)
-                command("input", "keyevent", "KEYCODE_HOME")
-            }
-            Thread.sleep(1500)
-            command(*launch.toTypedArray())
-        } catch (e: CommandFailure) {
-            "BenchError: ${MeasurementFailure.short(e.output)}\nBenchErrorType: COMMAND\n${e.output.take(32000)}"
-        } catch (e: Exception) {
-            "BenchError: ${MeasurementFailure.short(e.message ?: e.javaClass.simpleName)}\nBenchErrorType: COMMAND\n${e.stackTraceToString().take(8000)}"
-        }
-    }
+    @Synchronized override fun prepareLaunch(component: String, mode: String, userId: Int): String = try {
+        LaunchCommand.start(component, mode, userId)
+        if (mode == "COLD") command("am", "force-stop", "--user", userId.toString(), component.substringBefore('/'))
+        command("input", "keyevent", "KEYCODE_HOME")
+        Thread.sleep(1500)
+        "Prepared: ok"
+    } catch (e: Exception) { "BenchError: ${MeasurementFailure.short(e.message.orEmpty())}" }
+
+    @Synchronized override fun launchOnly(component: String, mode: String, userId: Int): String = try {
+        val args = LaunchCommand.start(component, mode, userId)
+        val clock = android.os.SystemClock.uptimeMillis()
+        command(*args.toTypedArray()) + "\nBenchLaunchUptimeMs: $clock\n"
+    } catch (e: CommandFailure) { "BenchError: ${MeasurementFailure.short(e.output)}\n${e.output.take(32000)}" }
+    catch (e: Exception) { "BenchError: ${MeasurementFailure.short(e.message.orEmpty())}\n${e.stackTraceToString().take(8000)}" }
     override fun destroy() { kotlin.system.exitProcess(0) }
 }

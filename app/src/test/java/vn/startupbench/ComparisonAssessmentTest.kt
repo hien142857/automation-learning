@@ -53,4 +53,9 @@ class ComparisonAssessmentTest {
         val summary = ComparisonAssessment.overall(listOf(assess(), assess(b = emptyList())))
         assertTrue(summary.contains("chưa đủ cơ sở"))
     }
+    @Test fun differenceInsideObservationIntervalCannotClaimOptimization() {
+        val result = ComparisonAssessment.assess(List(5) { 1000L }, List(5) { 800L }, true, true, 250.0)
+        assertEquals(ComparisonVerdict.INCONCLUSIVE, result.verdict)
+        assertTrue(result.title.contains("khoảng quan sát"))
+    }
 }
