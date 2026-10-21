@@ -113,7 +113,6 @@ class MainActivity : Activity() {
             selectedPackage.trim(), modes.isNotEmpty(), BenchEngine.connectionError)
         val state = when {
             baseState.enabled && ReadinessService.instance == null -> StartReadiness(false, "Cần bật trợ năng quan sát mốc UI ở phần 02.")
-            baseState.enabled && !ReadyCriterion.load(this, selectedPackage.trim()).configured -> StartReadiness(false, "Cần nhập mốc nội dung đích ở phần 02; không dùng mốc Splash.")
             else -> baseState
         }
         statusText?.text = when {
@@ -204,19 +203,19 @@ class MainActivity : Activity() {
             addView(text("Chỉ đo app có màn hình launcher, cùng hồ sơ người dùng.", 12f, muted))
         }
         card {
-            addView(text("02   Xác định nội dung đích", 18f))
-            addView(text("Chọn chữ xuất hiện ở màn hình dùng được hoặc resource ID đầy đủ, không phải Splash. Nếu nhập cả hai thì phải cùng khớp. Mặc định tự tiếp tục khi mốc ổn định 1,5 giây và không thấy dấu hiệu ads. Bạn chỉ cần đóng/bỏ qua ads trong app đích.", 13f, muted))
+            addView(text("02   Tự phát hiện giao diện", 18f))
+            addView(text("Không cần nhập mốc. App tự tìm giao diện có nội dung và khả năng thao tác, ổn định 1,5 giây và không thấy dấu hiệu ads. Bạn chỉ cần đóng/bỏ qua ads. Không đủ bằng chứng sẽ báo lý do, không trả số đo thành công.", 13f, muted))
             val saved = ReadyCriterion.load(this@MainActivity, selectedPackage.trim())
-            criterionText = input("Chữ chính xác, ví dụ: Tạo video", saved.text) { value ->
+            criterionText = input("Nâng cao · chữ mốc (tùy chọn; để trống để tự tìm)", saved.text) { value ->
                 ReadyCriterion.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(resourceId = criterionId?.text?.toString()?.trim() ?: saved.resourceId, text = value.trim()))
                 refreshReadiness()
             }; addView(criterionText)
-            criterionId = input("Resource ID, ví dụ com.example:id/home", saved.resourceId) { value ->
+            criterionId = input("Nâng cao · resource ID (tùy chọn)", saved.resourceId) { value ->
                 ReadyCriterion.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(resourceId = value.trim(), text = criterionText?.text?.toString()?.trim().orEmpty()))
                 refreshReadiness()
             }; addView(criterionId)
             autoContinueInput = CheckBox(this@MainActivity).apply {
-                text = "Tự tiếp tục khi nội dung đích ổn định"; setTextColor(Color.WHITE); isChecked = saved.autoContinue
+                text = "Tự tiếp tục (luôn bật khi không nhập mốc)"; setTextColor(Color.WHITE); isChecked = saved.autoContinue
                 setOnCheckedChangeListener { _, checked ->
                     ReadyCriterion.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(autoContinue = checked))
                 }
@@ -337,6 +336,8 @@ class MainActivity : Activity() {
                 addView(text("Theo dõi tự động · Không ads = không ghi nhận dấu hiệu, không bảo đảm nhận ra mọi ads. Kiểm tra mốc nội dung trước khi đối chứng.", 12f, muted))
             else addView(text("Xác nhận mốc bởi tester", 12f, muted))
             addView(text("Trung bình = tổng thời gian / số mẫu được xác nhận trong CÙNG nhóm. Không gộp ads và không ads.", 13f, muted))
+            if (item.optJSONObject("readinessCriterion")?.optString("mode") == "auto-discovery")
+                addView(text("Chỉ số: thời gian đến giao diện ổn định tự phát hiện · Ước lượng theo giao diện, không xác minh tải hoàn tất. Màn hình đăng nhập/onboarding cũng có thể là giao diện ổn định.", 13f, muted))
             listOf("COLD", "WARM", "HOT").forEach { mode ->
                 addView(text(mode, 23f, accent).apply { setTypeface(null, Typeface.BOLD) })
                 val attempted = item.androidResults().count { it.mode == mode }
@@ -409,7 +410,7 @@ class MainActivity : Activity() {
     private fun details(item: JSONObject) {
         val samples = item.optJSONArray("samples")
         val body = text(item.optString("errorDetail").let { if (it.isBlank()) "" else "$it\n\n" } + item.results().mapIndexed { index, r ->
-            "#${index + 1} ${r.mode} · ${if (r.valid) "Đã xác minh UI; Android TotalTime ${r.totalMs?.let { "$it ms" } ?: "không có"}" else "CHƯA XÁC MINH TỰ ĐỘNG: ${r.error}"}\n${r.raw}\nBằng chứng UI / hành động:\n${samples?.getJSONObject(index)?.optJSONObject("evidence")?.toString(2) ?: "Không có: dữ liệu cũ không chứng minh đã qua Splash."}"
+            "#${index + 1} ${r.mode} · ${if (r.valid) "Có bằng chứng quan sát UI; Android TotalTime ${r.totalMs?.let { "$it ms" } ?: "không có"}" else "CHƯA XÁC MINH TỰ ĐỘNG: ${r.error}"}\n${r.raw}\nBằng chứng UI / hành động:\n${samples?.getJSONObject(index)?.optJSONObject("evidence")?.toString(2) ?: "Không có: dữ liệu cũ không chứng minh đã qua Splash."}"
         }.joinToString("\n\n"), 13f, Color.BLACK).apply { setTextIsSelectable(true); setPadding(dp(18), 0, dp(18), 0) }
         AlertDialog.Builder(this).setTitle("Mẫu đo · log gốc").setView(ScrollView(this).apply { addView(body) }).setPositiveButton("Đóng", null).show()
     }

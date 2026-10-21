@@ -39,6 +39,32 @@ class ReadinessEvidenceTest {
         assertTrue(EvidencePolicy.assisted(p)); assertFalse(EvidencePolicy.accepted(p))
         assertEquals(listOf(1000L), session(p).assistedValues("COLD"))
     }
+    @Test fun discoveredMarkerNeedsCandidateEvidenceNotJustAutomaticConfirmation() {
+        val e = automatic().put("criterion", ReadyCriterion("com.example", "", "").json())
+        assertFalse(EvidencePolicy.accepted(e))
+        e.put("autoScreen", AutoScreen.evaluate(listOf(ScreenElement("Text", "title", "Home", false),
+            ScreenElement("Button", "create", "Create", true), ScreenElement("Button", "history", "History", true)), true, false).json())
+        assertTrue(EvidencePolicy.accepted(e))
+        assertEquals(listOf(1000L), session(e).readyValues("COLD"))
+        assertEquals(1, session(e).discoveredSignatures().size)
+        e.getJSONObject("autoScreen").put("reason", "insufficient_content")
+        assertFalse(EvidencePolicy.accepted(e))
+    }
+    @Test fun failureReasonsDistinguishAdsLoadingUnreadableAndUnstable() {
+        val e = automatic().put("criterion", ReadyCriterion("com.example", "", "").json())
+        assertTrue(ObservationFailure.explain(e.put("blockerVisible", true)).contains("quảng cáo"))
+        e.put("blockerVisible", false).put("discoveryReason", "loading_visible")
+        assertTrue(ObservationFailure.explain(e).contains("Splash/đang tải"))
+        e.put("discoveryReason", "ui_unreadable")
+        assertTrue(ObservationFailure.explain(e).contains("không đọc đủ"))
+        e.put("discoveryReason", "candidate")
+        assertTrue(ObservationFailure.explain(e).contains("chưa giữ nguyên"))
+    }
+    @Test fun explicitMarkerDoesNotRequireAutomaticContentThresholds() {
+        val e = automatic().put("discoveryReason", "insufficient_content")
+        assertTrue(ObservationFailure.explain(e).contains("mốc đã cấu hình"))
+        assertFalse(ObservationFailure.explain(e).contains("3 nhãn"))
+    }
     @Test fun androidColdTimingAloneDoesNotProveTheAppPassedSplash() {
         val s = session(null)
         assertTrue(s.androidResults().single().valid)

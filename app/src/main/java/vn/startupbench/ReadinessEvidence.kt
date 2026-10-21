@@ -5,7 +5,8 @@ import org.json.JSONObject
 
 data class ReadyCriterion(val packageName: String, val resourceId: String, val text: String, val timeoutMs: Long = 60000, val autoContinue: Boolean = true, val blockerText: String = "") {
     val configured get() = resourceId.isNotBlank() || text.isNotBlank()
-    fun json() = JSONObject().put("package", packageName).put("resourceId", resourceId).put("text", text).put("timeoutMs", timeoutMs).put("autoContinue", autoContinue).put("blockerText", blockerText)
+    val automatic get() = autoContinue || !configured
+    fun json() = JSONObject().put("package", packageName).put("resourceId", resourceId).put("text", text).put("timeoutMs", timeoutMs).put("autoContinue", automatic).put("mode", if (configured) "configured-marker" else "auto-discovery").put("blockerText", blockerText)
     companion object {
         fun load(context: Context, pkg: String): ReadyCriterion {
             val prefs = context.getSharedPreferences("readiness", Context.MODE_PRIVATE)
@@ -34,7 +35,13 @@ object EvidencePolicy {
         evidence.optString("targetPackage").isNotBlank() && evidence.optBoolean("assisted") == assisted && !evidence.optBoolean("interrupted") &&
         (assisted || (!evidence.optBoolean("recheckedAfterTesterAction") && (evidence.optJSONArray("rejectedCandidates")?.length() ?: 0) == 0)) &&
         evidence.optJSONObject("criterion")?.let { it.optString("package") == evidence.optString("targetPackage") &&
-            (it.optString("resourceId").isNotBlank() || it.optString("text").isNotBlank()) } == true
+            (it.optString("resourceId").isNotBlank() || it.optString("text").isNotBlank() || discovery(evidence)) } == true
+
+    private fun discovery(e: JSONObject): Boolean = e.optJSONObject("criterion")?.optString("mode") == "auto-discovery" &&
+        e.optString("confirmationMethod") == "automatic-marker-v1" && e.optJSONObject("autoScreen")?.let {
+            it.optString("method") == "stable-structure-v1" && it.optString("reason") == "candidate" &&
+            it.optString("signature").matches(Regex("[a-f0-9]{64}")) && it.optInt("labelCount") >= 3 && it.optInt("actionCount") >= 1
+        } == true
 
     private fun confirmed(e: JSONObject): Boolean {
         if (e.optString("confirmationMethod") != "automatic-marker-v1") return e.optBoolean("testerConfirmed")

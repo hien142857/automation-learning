@@ -38,6 +38,9 @@ class ReadinessService : AccessibilityService(), ReadinessObserver {
     private var blockerVisible = false
     private var blockerScanComplete = false
     private var blockers = JSONArray()
+    private var autoScreen = ScreenCandidate("ui_unreadable")
+    private var previousSignature = ""
+    private var discoveryReason = "ui_unreadable"
     private var panel: LinearLayout? = null
     private var label: TextView? = null
     private var prompt: AlertDialog? = null
@@ -72,6 +75,7 @@ class ReadinessService : AccessibilityService(), ReadinessObserver {
         synchronized(guard) {
             criterion = target; armAt = SystemClock.uptimeMillis(); marker.first = -1; marker.stable = -1
             marker.missing = armAt; foreground = ""; assisted = false; interrupted = false; events = JSONArray()
+            previousSignature = ""; autoScreen = ScreenCandidate("ui_unreadable"); discoveryReason = "ui_unreadable"
             blockerVisible = false; blockerScanComplete = false; blockers = JSONArray()
             observerError = ""; lastScan = armAt; maxScanGap = 0
         }
@@ -94,27 +98,35 @@ class ReadinessService : AccessibilityService(), ReadinessObserver {
             return (target.resourceId.isBlank() || node.viewIdResourceName == target.resourceId) &&
                 (target.text.isBlank() || node.text?.toString()?.trim() == target.text)
         }
-        val nodes = if (root == null || pkg != target.packageName) emptyList() else if (target.resourceId.isNotBlank())
+        val nodes = if (!target.configured || root == null || pkg != target.packageName) emptyList() else if (target.resourceId.isNotBlank())
             root.findAccessibilityNodeInfosByViewId(target.resourceId) else root.findAccessibilityNodeInfosByText(target.text)
         // Inspect bounded visible UI, including descriptions and common SDK close IDs.
         // Unknown/custom-drawn ads remain a limitation; a configured blocker improves detection.
         val pending = java.util.ArrayDeque<AccessibilityNodeInfo>()
         if (root != null && pkg == target.packageName) pending.add(root)
+        val elements = mutableListOf<ScreenElement>()
         var scanned = 0
         var blocker: String? = null
         while (pending.isNotEmpty() && scanned < 1500) {
             val node = pending.removeFirst(); scanned++
-            if (!node.isVisibleToUser || node.isPassword) continue
+            if (!node.isVisibleToUser || node.isPassword || node.isEditable) continue
             val hint = AdSignals.detect(node.text?.toString().orEmpty(), node.contentDescription?.toString().orEmpty(),
                 node.viewIdResourceName.orEmpty(), target.blockerText)
             if (hint != null) blocker = hint
+            elements.add(ScreenElement(node.className?.toString().orEmpty(), node.viewIdResourceName.orEmpty(),
+                (node.text ?: node.contentDescription)?.toString()?.trim().orEmpty(), node.isEnabled && (node.isClickable || node.isScrollable)))
             for (i in 0 until node.childCount) node.getChild(i)?.let { pending.add(it) }
         }
         val complete = root != null && pkg == target.packageName && pending.isEmpty()
-        val matched = nodes.count { matches(it) } == 1 && blocker == null && (!target.autoContinue || complete)
+        val candidate = AutoScreen.evaluate(elements, complete, blocker != null)
+        val matched = (if (target.configured) nodes.count { matches(it) } == 1 else candidate.eligible) && blocker == null && (!target.automatic || complete)
         synchronized(guard) {
             if (criterion !== target) return
             foreground = pkg
+            autoScreen = candidate
+            discoveryReason = candidate.reason
+            if (!target.configured && previousSignature != candidate.signature) marker.reset(now)
+            previousSignature = candidate.signature
             blockerScanComplete = complete
             if (blocker != null) {
                 assisted = true
@@ -122,7 +134,13 @@ class ReadinessService : AccessibilityService(), ReadinessObserver {
                 label?.text = "Có dấu hiệu quảng cáo. Bạn chỉ cần đóng/bỏ qua trong app; công cụ sẽ tự tiếp tục khi thấy nội dung đích."
             } else if (blockerVisible) label?.text = "Đã hết dấu hiệu quảng cáo. Đang chờ mốc nội dung ổn định để tự tiếp tục…"
             blockerVisible = blocker != null
-            marker.observe(matched, now, if (target.autoContinue) 1500 else 500)
+            if (!target.configured && blocker == null) label?.text = when (candidate.reason) {
+                "candidate" -> "Đang kiểm tra giao diện ổn định 1,5 giây. Khi đủ bằng chứng sẽ tự lưu và đo tiếp."
+                "loading_visible" -> "Còn dấu hiệu Splash/đang tải; đang chờ nội dung. Chưa có kết quả."
+                "ui_unreadable" -> "Chưa đọc đủ giao diện app đích. Đang thử lại; quá thời gian chờ sẽ báo hướng xử lý."
+                else -> "Chưa đủ dấu hiệu nội dung để tự chọn mốc. Nếu có ads, bạn chỉ cần đóng/bỏ qua."
+            }
+            marker.observe(matched, now, if (target.automatic) 1500 else 500)
         }
     }
     override fun evidence(launchAt: Long): JSONObject = synchronized(guard) {
@@ -130,9 +148,9 @@ class ReadinessService : AccessibilityService(), ReadinessObserver {
             .put("launchUptimeMs", launchAt).put("firstMatchUptimeMs", marker.first).put("confirmedStableUptimeMs", marker.stable)
             .put("lastMissingUptimeMs", marker.missing).put("assisted", assisted).put("actions", JSONArray(events.toString()))
             .put("interrupted", interrupted).put("blockerVisible", blockerVisible).put("blockerScanComplete", blockerScanComplete)
-            .put("blockerSignals", JSONArray(blockers.toString()))
+            .put("blockerSignals", JSONArray(blockers.toString())).put("autoScreen", autoScreen.json()).put("discoveryReason", discoveryReason)
             .put("observerError", observerError).put("maxObservedScanGapMs", maxScanGap)
-            .put("criterion", criterion?.json()).put("observationMethod", "accessibility-visible-enabled-exact-match; stable>=${if (criterion?.autoContinue == true) 1500 else 500}ms; nominal-poll=200ms; bounded-ad-hint-scan")
+            .put("criterion", criterion?.json()).put("observationMethod", "accessibility-visible-enabled-exact-match; stable>=${if (criterion?.automatic == true) 1500 else 500}ms; nominal-poll=200ms; bounded-ad-hint-scan")
             .put("observedUpperMs", if (marker.first >= launchAt) marker.first - launchAt else -1)
             .put("observedLowerMs", (marker.missing - launchAt).coerceAtLeast(0))
     }

@@ -37,9 +37,9 @@ fun JSONObject.results(): List<LaunchResult> {
         else if (EvidencePolicy.launchAccepted(proof, result.raw)) result.copy(error = null, uiVerified = true)
         else result.copy(error = when (proof?.optString("status")) {
             "assisted_ui" -> "Có ads/thao tác: lưu riêng, không dùng trong nhóm tự động."
-            "timeout" -> "Không thấy mốc UI trước timeout; không chứng minh đã qua Splash."
+            "timeout" -> proof.optString("failureReason", ObservationFailure.explain(proof))
             "rejected_by_tester" -> "Tester từ chối xác nhận màn hình đích."
-            else -> "Chưa có bằng chứng mốc UI và xác nhận hợp lệ."
+            else -> proof?.optString("failureReason")?.takeIf { it.isNotBlank() } ?: "Chưa có bằng chứng mốc UI và xác nhận hợp lệ."
         })
     }
 }
@@ -85,3 +85,13 @@ fun JSONObject.observationIntervals(mode: String, cohort: MeasurementCohort = Me
 }
 
 fun JSONObject.values(mode: String): List<Long> = results().filter { it.mode == mode && it.valid }.mapNotNull { it.totalMs }
+
+fun JSONObject.discoveredSignatures(): Set<String> {
+    val samples = optJSONArray("samples") ?: return emptySet()
+    return (0 until samples.length()).mapNotNull { i ->
+        val sample = samples.getJSONObject(i)
+        val e = sample.optJSONObject("evidence") ?: return@mapNotNull null
+        if (EvidencePolicy.launchAccepted(e, sample.optString("raw")) || EvidencePolicy.launchAssisted(e, sample.optString("raw")))
+            e.optJSONObject("autoScreen")?.optString("signature")?.takeIf { it.isNotBlank() } else null
+    }.toSet()
+}

@@ -69,7 +69,6 @@ object BenchEngine {
         require(repeats in listOf(1, 3, 5, 10)) { "Số lần đo không hợp lệ." }
         val observer = checkNotNull(ReadinessService.instance) { "Cần bật trợ năng quan sát mốc UI trước khi đo." }
         val criterion = ReadyCriterion.load(context, pkg)
-        require(criterion.configured) { "Cần cấu hình chữ hoặc resource ID của nội dung đích, không dùng mốc Splash." }
         require(criterion.resourceId.isBlank() || criterion.resourceId.startsWith("$pkg:id/")) { "Resource ID cần đầy đủ, bắt đầu bằng $pkg:id/." }
         val app = context.applicationContext
         val runIntent = Intent(app, RunService::class.java)
@@ -79,8 +78,8 @@ object BenchEngine {
             put("device", "${Build.MANUFACTURER} ${Build.MODEL}"); put("android", Build.VERSION.RELEASE)
             put("sdk", Build.VERSION.SDK_INT); put("fingerprint", Build.FINGERPRINT)
             put("component", component); put("repeats", repeats); put("modes", JSONArray(modes))
-            put("protocol", "observed-ui-v2; clock=uptime-before-am; stable=${if (criterion.autoContinue) 1500 else 500}ms; poll=200ms; warm=flags-0x10008000")
-            put("readinessCriterion", criterion.json()); put("metric", "observed-ui-marker; separate-confirmation-method-and-cohort")
+            put("protocol", "observed-ui-v3; discovery=stable-structure-v1; clock=uptime-before-am; stable=${if (criterion.automatic) 1500 else 500}ms; poll=200ms; warm=flags-0x10008000")
+            put("readinessCriterion", criterion.json()); put("metric", if (criterion.configured) "observed-ui-marker; separate-confirmation-method-and-cohort" else "observed-stable-ui-auto; confidence=heuristic; not-TTFD")
             put("status", "running"); put("samples", JSONArray())
             val battery = app.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
             put("batteryLevel", battery?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1)

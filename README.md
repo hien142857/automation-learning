@@ -8,7 +8,7 @@
 2. Cài [Shizuku](https://shizuku.rikka.app/download/), bật Developer options và Wireless debugging, ghép nối và Start Shizuku. Có thể cần Start lại sau khi reboot.
 3. Mở Startup Bench → **Kết nối / hướng dẫn** → cấp quyền Shizuku. Cho phép thông báo để dễ quay lại / dừng phiên đo.
 4. Chọn app có launcher trong hồ sơ hiện tại hoặc nhập package. Không hỗ trợ đo chính Startup Bench, Shizuku hoặc app trong hồ sơ khác.
-5. Nhập mốc UI nội dung đích (chữ chính xác hoặc resource ID đầy đủ). Dùng một mốc ổn định, duy nhất ở màn hình dùng được, không phải Splash và không phải dữ liệu riêng tư. Bật **Startup Bench · Quan sát mốc UI** trong Trợ năng. Nếu Android chặn APK cài ngoài, mở Thông tin ứng dụng → menu → Cho phép cài đặt bị hạn chế trước.
+5. Không cần nhập mốc: để trống hai ô nâng cao để tự phát hiện giao diện. Có thể nhập mốc UI riêng nếu muốn dùng quy trình đã cấu hình (chữ/resource ID ổn định, duy nhất, không phải Splash hoặc dữ liệu riêng tư). Bật **Startup Bench · Quan sát mốc UI** trong Trợ năng. Nếu Android chặn APK cài ngoài, mở Thông tin ứng dụng → menu → Cho phép cài đặt bị hạn chế trước.
 6. Chọn Cold / Warm / Hot, số lần và ghi chú build. Bấm **Bắt đầu đo & lưu phiên**.
 7. Giữ màn hình mở khóa và làm theo bảng hướng dẫn trên app đích. Warm/Hot yêu cầu tới màn hình đích để chuẩn bị trước; chế độ tự động quan sát mốc để tiếp tục. Mặc định **Tự tiếp tục** bật: nếu có ads, đóng/bỏ qua ngay trong app đích, công cụ chờ mốc rồi tự lưu/đo tiếp. Có thể bấm **Có ads / cần thao tác** nếu công cụ chưa nhận ra. Nếu tắt tự tiếp tục, mỗi mẫu yêu cầu xác nhận nội dung không bị ads/Splash che.
 8. Vào **Lịch sử**, chọn hai phiên cùng package và bấm so sánh. Phiên chọn đầu tiên là mốc. Xuất CSV từ chi tiết phiên.
@@ -17,7 +17,7 @@
 
 ### Nút bắt đầu bị khóa / kết nối dịch vụ đo
 
-Từ bản 0.1.1, nút bị khóa có màu xám và hiện lý do ngay phía trên. Từ 0.2.0, nút chỉ bật khi Shizuku và dịch vụ đo đã kết nối, đã chọn package / kiểu đo, có mốc UI và dịch vụ quan sát Trợ năng đã bật. Trạng thái “Đang kết nối dịch vụ đo” chưa đủ để bắt đầu, dù Shizuku đã được cấp quyền.
+Từ bản 0.1.1, nút bị khóa có màu xám và hiện lý do ngay phía trên. Từ 0.2.0, nút chỉ bật khi Shizuku và dịch vụ đo đã kết nối, đã chọn package / kiểu đo, dịch vụ quan sát Trợ năng đã bật. Từ 0.4.0 không cần nhập mốc UI để bắt đầu. Trạng thái “Đang kết nối dịch vụ đo” chưa đủ để bắt đầu, dù Shizuku đã được cấp quyền.
 
 Nếu kết nối quá 15 giây, công cụ hiển thị lỗi thay vì chờ vô hạn. Bấm **Kết nối / hướng dẫn** để gỡ phiên dịch vụ cũ và khởi tạo lại. Nếu vẫn không kết nối, kiểm tra quyền Startup Bench trong Shizuku → Authorized applications, khởi động lại Shizuku rồi mở lại công cụ. Cần kiểm tra log trên thiết bị để xác định lỗi khởi chạy dịch vụ cụ thể; thông báo timeout không tự xác định nguyên nhân.
 
@@ -30,9 +30,17 @@ Nếu kết nối quá 15 giây, công cụ hiển thị lỗi thay vì chờ v�
 - Chỉ nêu dấu hiệu nhanh/chậm khi chênh lệch đạt cả 5% và 10 ms, đồng thời lớn hơn 2 lần độ phân tán lớn nhất của hai nhóm: độ lệch chuẩn mẫu khi chọn trung bình, MAD khi chọn trung vị (median độ lệch tuyệt đối so với median). Chênh lệch nhỏ, nằm trong khoảng trễ quan sát UI, dao động lớn, thiếu mẫu, mốc 0 ms hoặc khác điều kiện sẽ có lời khuyên đo lại thay vì khẳng định tối ưu. Một kiểu đo chậm hơn ngăn kết luận tối ưu đồng đều.
 - Nên đo lại 10 lần với cùng dữ liệu app, nhiệt độ, nguồn và mạng; cải thiện startup không đại diện cho tốc độ tải dữ liệu hoàn tất.
 
+## Tự phát hiện mốc và giải thích không có kết quả (0.4.0)
+
+- Để trống chữ/resource ID: không cần cấu hình mốc, luôn tự tiếp tục. Công cụ đọc cây UI của app đích (tối đa 1.500 node), tìm giao diện có ít nhất 3 nhãn khác nhau và 1 thành phần thao tác, không có dấu hiệu ads/ProgressBar/loading/Splash đã nhận biết. Chữ trong ô nhập/password không được dùng. Dấu vết giao diện phải giữ nguyên ít nhất 1,5 giây; thay đổi nội dung làm bắt đầu lại khoảng ổn định, không đặt lại đồng hồ mở app.
+- Chỉ số được gọi **thời gian đến giao diện ổn định tự phát hiện**, mức tin cậy heuristic. Đây không phải TTFD hoặc bằng chứng mọi nội dung đã tải xong. Màn hình đăng nhập/onboarding hay ads không nhận diện được vẫn có thể giống giao diện ổn định; không thể bảo đảm phân biệt ngữ nghĩa mọi APK. Nếu cần màn hình đích cụ thể, vẫn có ô nâng cao để cấu hình.
+- Sau 60 giây mà không đủ điều kiện, popup chỉ rõ: còn dấu hiệu ads, còn Splash/loading, không đọc đủ cây UI, thiếu nhãn/thành phần thao tác, giao diện thay đổi liên tục, mất foreground hoặc mất điều kiện quan sát. Mô tả nêu bằng chứng quan sát và khả năng xảy ra, không tự khẳng định app đã crash. Tester có thể thử lại/bỏ qua/dừng; lý do lưu vào lịch sử/JSON/CSV. Mẫu lỗi không vào trung bình và không đổi thành 0 ms.
+- Bằng chứng lưu `autoScreen` (hash SHA-256 của dấu vết UI, số nhãn/thành phần thao tác, phương pháp và mức tin cậy), không lưu chữ UI thô. Giữ thời gian quan sát đầu tiên của giao diện cuối đã ổn định, không tính thêm 1,5 giây chờ kiểm tra vào thời gian mốc. Thời gian chờ ads/thao tác vẫn nằm trong nhóm hỗ trợ.
+- Khi hai phiên không cùng một dấu vết giao diện tự chọn, màn so sánh hiện cảnh báo và không kết luận tối ưu, dù vẫn hiển thị số liệu. Thay đổi nội dung động cũng có thể gây cảnh báo hoặc không có kết quả; đây là giới hạn có chủ đích để tránh so sánh các màn hình khác nhau.
+
 ## Tự tiếp tục sau quảng cáo (0.3.0)
 
-- Mặc định bật **Tự tiếp tục khi nội dung đích ổn định** ở phần 02. Đặt chữ/resource ID của nội dung thực sự dùng được. Công cụ chờ mốc ổn định 1,5 giây, không còn dấu hiệu ads đang quan sát và cây UI đã được quét đủ trong giới hạn 1.500 node; sau đó tự lưu mẫu và chạy tiếp. Chuẩn bị Warm/Hot cũng tự tiếp tục, không cần bấm kiểm tra mốc hay xác nhận mỗi lần.
+- Mặc định tự tiếp tục ở phần 02. Từ 0.4.0 có thể để trống mốc để tự phát hiện; nhập chữ/resource ID nếu cần mốc nội dung riêng. Công cụ chờ mốc ổn định 1,5 giây, không còn dấu hiệu ads đang quan sát và cây UI đã được quét đủ trong giới hạn 1.500 node; sau đó tự lưu mẫu và chạy tiếp. Chuẩn bị Warm/Hot cũng tự tiếp tục, không cần bấm kiểm tra mốc hay xác nhận mỗi lần.
 - Nhận diện **dấu hiệu** ads qua nhãn/mô tả cụ thể (Skip ad, Bỏ qua quảng cáo…), một số ID đóng ads phổ biến, hoặc chữ chính xác do tester nhập vào ô **Chữ trên ads cần chờ biến mất**. Nhãn này phải biến mất sau khi ads đóng, tránh chọn chữ thường trực ở màn hình chính. Công cụ không tự nhấn bỏ qua/đóng/quảng cáo.
 - Tester chỉ đóng/bỏ qua ads trong app đích. Công cụ quan sát liên tục; khi ads/mốc mất đi thì hủy trạng thái sẵn sàng cũ, chờ nội dung ổn định lại. Phát hiện dấu hiệu ads hoặc thao tác sẽ lưu nhóm có hỗ trợ. Giữ nguyên đồng hồ từ trước lệnh mở app, bao gồm thời gian chờ/thao tác, không đặt lại sau ads và không coi đó là startup thuần.
 - Bằng chứng ghi `confirmationMethod=automatic-marker-v1`, `automaticConfirmed`, dấu hiệu ads, trạng thái quét và sự kiện thao tác. Không giả lập `testerConfirmed=true`. Mẫu tự động và mẫu tester xác nhận dùng quy trình/metadata khác nhau nên không kết luận tối ưu khi trộn điều kiện.

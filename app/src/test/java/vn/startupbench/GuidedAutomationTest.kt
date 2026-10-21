@@ -20,17 +20,29 @@ class GuidedAutomationTest {
         }
         override fun destroy() {}
     }
-    private inner class Observer(val withAds: Boolean = false, val timeout: Boolean = false) : ReadinessObserver {
-        var prompts = 0; var interactions = 0; var waits = 0
+    private inner class Observer(val withAds: Boolean = false, val timeout: Boolean = false, val target: ReadyCriterion = criterion) : ReadinessObserver {
+        var prompts = 0; var interactions = 0; var waits = 0; var lastPrompt = ""
         override fun arm(target: ReadyCriterion, message: String) {}
         override fun evidence(launchAt: Long) = JSONObject().put("status", if (timeout) "timeout" else "marker_observed")
             .put("launchUptimeMs", launchAt).put("firstMatchUptimeMs", launchAt + 4000)
             .put("confirmedStableUptimeMs", launchAt + 5500).put("lastMissingUptimeMs", launchAt + 3800)
-            .put("criterion", criterion.json()).put("targetPackage", criterion.packageName).put("foregroundPackage", criterion.packageName)
+            .put("criterion", target.json()).put("targetPackage", target.packageName).put("foregroundPackage", target.packageName)
+            .put("discoveryReason", if (timeout) "ui_unreadable" else "candidate")
+            .put("autoScreen", AutoScreen.evaluate(listOf(ScreenElement("Text", "title", "Home", false), ScreenElement("Button", "create", "Create", true), ScreenElement("Button", "history", "History", true)), true, false).json())
             .put("assisted", withAds).put("interrupted", false).put("blockerVisible", false).put("blockerScanComplete", true)
         override fun awaitReady(launchAt: Long, timeoutMs: Long): JSONObject { waits++; return evidence(launchAt) }
-        override fun ask(title: String, message: String, choices: List<String>): Int { prompts++; return 1 }
+        override fun ask(title: String, message: String, choices: List<String>): Int { prompts++; lastPrompt = message; return 1 }
         override fun allowInteraction(message: String): Boolean { interactions++; return true }
+    }
+    @Test fun emptyMarkerRunsAutomaticDiscoveryWithoutAskingForUserConfiguration() {
+        BenchEngine.cancel = false
+        val target = ReadyCriterion("com.example", "", "", autoContinue = false)
+        assertTrue(target.automatic)
+        val observer = Observer(target = target)
+        val result = GuidedSample.run(Remote(), observer, target, "com.example/.Main", "COLD", 0)
+        assertEquals("next", result.decision); assertEquals(0, observer.prompts); assertEquals(0, observer.interactions)
+        assertTrue(EvidencePolicy.launchAccepted(result.evidence, result.raw))
+        assertEquals("auto-discovery", result.evidence.getJSONObject("criterion").getString("mode"))
     }
     @Test fun coldAfterUserClosesAdFinishesWithoutManualCheckOrConfirmation() {
         BenchEngine.cancel = false
@@ -58,6 +70,9 @@ class GuidedAutomationTest {
         val observer = Observer(timeout = true)
         val result = GuidedSample.run(Remote(), observer, criterion, "com.example/.Main", "COLD", 0)
         assertEquals("skip", result.decision); assertEquals(1, observer.prompts)
+        assertTrue(observer.lastPrompt.contains("không thể trả chỉ số giao diện tự động"))
+        assertTrue(observer.lastPrompt.contains("không được tính vào trung bình"))
+        assertTrue(result.evidence.getString("failureReason").contains("không đọc đủ"))
         assertFalse(EvidencePolicy.accepted(result.evidence)); assertFalse(EvidencePolicy.assisted(result.evidence))
     }
 }

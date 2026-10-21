@@ -55,6 +55,10 @@ class ComparisonScreen(private val activity: Activity, private val content: Line
         }.toMutableList()
         if (base.optInt("batteryTempTenthsC", -1) >= 0 && candidate.optInt("batteryTempTenthsC", -1) >= 0 &&
             kotlin.math.abs(base.optInt("batteryTempTenthsC") - candidate.optInt("batteryTempTenthsC")) >= 30) warnings.add("Nhiệt độ đầu phiên lệch từ 3°C")
+        val discovered = base.optJSONObject("readinessCriterion")?.optString("mode") == "auto-discovery" ||
+            candidate.optJSONObject("readinessCriterion")?.optString("mode") == "auto-discovery"
+        if (discovered && (base.discoveredSignatures().size != 1 || base.discoveredSignatures() != candidate.discoveredSignatures()))
+            warnings.add("Giao diện tự phát hiện khác nhau hoặc chưa có cùng một mốc ổn định; không kết luận tối ưu từ các màn hình khác nhau")
         val assessments = listOf("COLD", "WARM", "HOT").associateWith { mode ->
             ComparisonAssessment.assess(base.cohortValues(mode, selected), candidate.cohortValues(mode, selected), warnings.isEmpty(), complete(base, mode) && complete(candidate, mode),
                 maxOf(base.observationIntervals(mode, selected).maxOrNull()?.toDouble() ?: 0.0, candidate.observationIntervals(mode, selected).maxOrNull()?.toDouble() ?: 0.0), statistic)
@@ -64,6 +68,7 @@ class ComparisonScreen(private val activity: Activity, private val content: Line
         content.addView(text("So sánh phiên đo", 24f).apply { setTypeface(null, Typeface.BOLD) })
         content.addView(text(base.optString("label") + " · " + base.optString("package"), 14f, muted))
         content.addView(text("${statistic.label} thời gian quan sát mốc UI · nhóm ${selected.label}. Không phải TTFD chuẩn.", 13f, muted))
+        if (discovered) content.addView(text("Đang đối chiếu thời gian đến giao diện ổn định tự phát hiện, không phải thời gian tải hoàn tất đã xác minh.", 13f, muted))
         fun selector(labels: List<String>, current: Int, changed: (Int) -> Unit): Spinner = Spinner(activity).apply {
             adapter = ArrayAdapter(activity, android.R.layout.simple_spinner_dropdown_item, labels)
             setSelection(current)
