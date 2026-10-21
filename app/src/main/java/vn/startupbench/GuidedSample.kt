@@ -5,7 +5,7 @@ import org.json.JSONObject
 
 data class GuidedSample(val raw: String, val evidence: JSONObject, val decision: String) {
     companion object {
-        fun run(remote: IMeasureService, service: ReadinessService, criterion: ReadyCriterion,
+        fun run(remote: IMeasureService, service: ReadinessObserver, criterion: ReadyCriterion,
                 component: String, mode: String, userId: Int): GuidedSample {
             fun failure(message: String, evidence: JSONObject, raw: String = message): GuidedSample {
                 val response = service.ask("Chưa có mẫu đủ cơ sở",
@@ -19,12 +19,13 @@ data class GuidedSample(val raw: String, val evidence: JSONObject, val decision:
                 val opening = remote.launchOnly(component, "HOT", userId)
                 if (opening.startsWith("BenchError:")) return failure(opening, JSONObject().put("status", "preparation_failed"))
                 while (!prepared && !BenchEngine.cancel) {
-                    if (!service.allowInteraction("Chuẩn bị $mode: đóng ads, xử lý đăng nhập và tới màn hình đích. Sau đó bấm Kiểm tra mốc."))
+                    if (!criterion.autoContinue && !service.allowInteraction("Chuẩn bị $mode: đóng ads, xử lý đăng nhập và tới màn hình đích. Sau đó bấm Kiểm tra mốc."))
                         return GuidedSample(opening, service.evidence(0).put("status", "preparation_failed"), "stop")
                     val start = SystemClock.uptimeMillis()
                     service.arm(criterion, "Đang kiểm tra mốc chuẩn bị $mode…")
                     val proof = service.awaitReady(start, criterion.timeoutMs)
                     if (proof.optString("status") != "marker_observed") return failure("Không thấy mốc UI khi chuẩn bị $mode. Kiểm tra chữ/resource ID hoặc app còn bị ads chặn.", proof.put("status", "preparation_failed"), opening)
+                    if (criterion.autoContinue) { prepared = true; continue }
                     prepared = service.ask("Xác nhận màn hình chuẩn bị", "Mốc UI đã xuất hiện. Nội dung đích đã dùng được và không còn ads che? Chỉ tiếp tục khi đúng; bước này chưa được tính thời gian.",
                         listOf("Đúng, tiếp tục đo", "Chưa, để tôi xử lý tiếp", "Dừng phiên")) .let {
                         if (it == 2 || it < 0) BenchEngine.cancel = true
@@ -35,7 +36,7 @@ data class GuidedSample(val raw: String, val evidence: JSONObject, val decision:
             if (BenchEngine.cancel) return GuidedSample("BenchError: Người dùng dừng", JSONObject().put("status", "cancelled"), "stop")
             val prep = remote.prepareLaunch(component, mode, userId)
             if (prep != "Prepared: ok") return failure(prep, JSONObject().put("status", "preparation_failed"))
-            service.arm(criterion, "Đang đo $mode. Không chạm nếu không cần. Nếu gặp ads, bấm Có ads / cần thao tác rồi xử lý.")
+            service.arm(criterion, if (criterion.autoContinue) "Đang đo $mode. Nếu có ads, chỉ cần đóng/bỏ qua trong app. Tự tiếp tục khi mốc nội dung ổn định; không cần bấm kiểm tra mốc." else "Đang đo $mode. Nếu có ads/thao tác, hãy đánh dấu và xử lý; công cụ sẽ hỏi xác nhận mốc.")
             val raw = remote.launchOnly(component, mode, userId)
             val launchAt = EvidencePolicy.launchClock(raw)
             val androidResult = LaunchResult.parse(mode, raw)
@@ -48,10 +49,18 @@ data class GuidedSample(val raw: String, val evidence: JSONObject, val decision:
                 if (rejectedCandidates.length() > 0) proof.put("assisted", true).put("recheckedAfterTesterAction", true)
                     .put("rejectedCandidates", org.json.JSONArray(rejectedCandidates.toString()))
                 if (proof.optString("status") != "marker_observed") return failure("Chưa xác minh được mốc trong ${criterion.timeoutMs / 1000} giây, hoặc màn hình bị khóa. Không dùng thời gian Splash thay thời gian sẵn sàng.", proof, raw)
+                if (criterion.autoContinue) {
+                    proof.put("confirmationMethod", "automatic-marker-v1").put("automaticConfirmed", true)
+                        .put("testerConfirmed", false)
+                        .put("status", if (proof.optBoolean("assisted")) "assisted_ui" else "verified_ui")
+                    if (!EvidencePolicy.launchAccepted(proof, raw) && !EvidencePolicy.launchAssisted(proof, raw))
+                        return failure("Bằng chứng tự động chưa đủ: kiểm tra mốc UI, dấu hiệu ads và quyền quan sát; có thể tắt tự tiếp tục để xác nhận từng mẫu.", proof.put("status", "automatic_incomplete"), raw)
+                    return GuidedSample(raw, proof, "next")
+                }
                 val confirmation = service.ask("Xác minh mẫu $mode",
                     "Đã quan sát mốc UI sau ${proof.optLong("observedUpperMs")} ms từ trước lệnh mở. Đây là thời điểm quan sát, không phải TTFD chuẩn.\n\nMốc có thực sự là nội dung đích, không còn Splash/ads che và dùng được không? Nếu có thao tác/ads, mẫu được lưu riêng. Thời gian bấm xác nhận cuối không dùng làm thời gian sẵn sàng.",
                     listOf("Đúng, không có ads / thao tác tay", "Đúng, nhưng có ads / thao tác tay", "Còn ads, để tôi xử lý tiếp", "Mốc cấu hình sai", "Dừng phiên"))
-                proof.put("testerConfirmed", confirmation in 0..1).put("testerConfirmedUptimeMs", SystemClock.uptimeMillis())
+                proof.put("confirmationMethod", "tester-explicit").put("testerConfirmed", confirmation in 0..1).put("testerConfirmedUptimeMs", SystemClock.uptimeMillis())
                 if (confirmation == 2) {
                     rejectedCandidates.put(proof.put("status", "occluded_candidate_rejected"))
                     if (!service.allowInteraction("Xử lý ads / màn hình chặn, sau đó bấm kiểm tra mốc. Đồng hồ gốc vẫn chạy; chờ/thao tác được tính trong nhóm hỗ trợ, không phải tốc độ thuần."))

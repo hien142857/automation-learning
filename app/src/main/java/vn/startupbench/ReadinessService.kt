@@ -21,15 +21,13 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /** Observes only the selected target. No text-entry events, screenshots or action replay. */
-class ReadinessService : AccessibilityService() {
+class ReadinessService : AccessibilityService(), ReadinessObserver {
     companion object { @Volatile var instance: ReadinessService? = null }
     private val handler = Handler(Looper.getMainLooper())
     private val guard = Any()
-    private var criterion: ReadyCriterion? = null
+    @Volatile private var criterion: ReadyCriterion? = null
     private var armAt = 0L
-    private var firstMatch = -1L
-    private var lastMissing = 0L
-    private var stableAt = -1L
+    private val marker = MarkerStability()
     private var foreground = ""
     private var assisted = false
     private var interrupted = false
@@ -37,6 +35,9 @@ class ReadinessService : AccessibilityService() {
     private var lastScan = 0L
     private var maxScanGap = 0L
     private var events = JSONArray()
+    private var blockerVisible = false
+    private var blockerScanComplete = false
+    private var blockers = JSONArray()
     private var panel: LinearLayout? = null
     private var label: TextView? = null
     private var prompt: AlertDialog? = null
@@ -49,10 +50,10 @@ class ReadinessService : AccessibilityService() {
         }
     }
     private fun broken(error: Throwable) { synchronized(guard) {
-        interrupted = true; stableAt = -1; observerError = MeasurementFailure.short(error.message.orEmpty())
+        interrupted = true; marker.stable = -1; observerError = MeasurementFailure.short(error.message.orEmpty())
     } }
     override fun onServiceConnected() { instance = this }
-    override fun onInterrupt() { synchronized(guard) { stableAt = -1; interrupted = true }; hide() }
+    override fun onInterrupt() { synchronized(guard) { marker.stable = -1; interrupted = true }; hide() }
     override fun onDestroy() { instance = null; handler.removeCallbacksAndMessages(null); hide(); super.onDestroy() }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -67,10 +68,11 @@ class ReadinessService : AccessibilityService() {
             }
         }
     }
-    fun arm(target: ReadyCriterion, message: String) {
+    override fun arm(target: ReadyCriterion, message: String) {
         synchronized(guard) {
-            criterion = target; armAt = SystemClock.uptimeMillis(); firstMatch = -1; stableAt = -1
-            lastMissing = armAt; foreground = ""; assisted = false; interrupted = false; events = JSONArray()
+            criterion = target; armAt = SystemClock.uptimeMillis(); marker.first = -1; marker.stable = -1
+            marker.missing = armAt; foreground = ""; assisted = false; interrupted = false; events = JSONArray()
+            blockerVisible = false; blockerScanComplete = false; blockers = JSONArray()
             observerError = ""; lastScan = armAt; maxScanGap = 0
         }
         handler.post { runCatching {
@@ -83,7 +85,7 @@ class ReadinessService : AccessibilityService() {
         val now = SystemClock.uptimeMillis()
         synchronized(guard) { maxScanGap = maxOf(maxScanGap, now - lastScan); lastScan = now }
         if (!getSystemService(android.os.PowerManager::class.java).isInteractive || getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked) {
-            synchronized(guard) { interrupted = true; stableAt = -1 }; return
+            synchronized(guard) { interrupted = true; marker.stable = -1 }; return
         }
         val root = windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.isActive }?.root
         val pkg = root?.packageName?.toString().orEmpty()
@@ -94,27 +96,47 @@ class ReadinessService : AccessibilityService() {
         }
         val nodes = if (root == null || pkg != target.packageName) emptyList() else if (target.resourceId.isNotBlank())
             root.findAccessibilityNodeInfosByViewId(target.resourceId) else root.findAccessibilityNodeInfosByText(target.text)
-        val matched = nodes.count { matches(it) } == 1
+        // Inspect bounded visible UI, including descriptions and common SDK close IDs.
+        // Unknown/custom-drawn ads remain a limitation; a configured blocker improves detection.
+        val pending = java.util.ArrayDeque<AccessibilityNodeInfo>()
+        if (root != null && pkg == target.packageName) pending.add(root)
+        var scanned = 0
+        var blocker: String? = null
+        while (pending.isNotEmpty() && scanned < 1500) {
+            val node = pending.removeFirst(); scanned++
+            if (!node.isVisibleToUser || node.isPassword) continue
+            val hint = AdSignals.detect(node.text?.toString().orEmpty(), node.contentDescription?.toString().orEmpty(),
+                node.viewIdResourceName.orEmpty(), target.blockerText)
+            if (hint != null) blocker = hint
+            for (i in 0 until node.childCount) node.getChild(i)?.let { pending.add(it) }
+        }
+        val complete = root != null && pkg == target.packageName && pending.isEmpty()
+        val matched = nodes.count { matches(it) } == 1 && blocker == null && (!target.autoContinue || complete)
         synchronized(guard) {
+            if (criterion !== target) return
             foreground = pkg
-            if (stableAt >= 0) return
-            if (matched) {
-                if (firstMatch < 0) firstMatch = now
-                if (now - firstMatch >= 500) stableAt = now
-            } else { firstMatch = -1; lastMissing = now }
+            blockerScanComplete = complete
+            if (blocker != null) {
+                assisted = true
+                if (!blockerVisible && blockers.length() < 100) blockers.put(JSONObject().put("uptimeMs", now).put("signal", blocker))
+                label?.text = "Có dấu hiệu quảng cáo. Bạn chỉ cần đóng/bỏ qua trong app; công cụ sẽ tự tiếp tục khi thấy nội dung đích."
+            } else if (blockerVisible) label?.text = "Đã hết dấu hiệu quảng cáo. Đang chờ mốc nội dung ổn định để tự tiếp tục…"
+            blockerVisible = blocker != null
+            marker.observe(matched, now, if (target.autoContinue) 1500 else 500)
         }
     }
-    fun evidence(launchAt: Long): JSONObject = synchronized(guard) {
+    override fun evidence(launchAt: Long): JSONObject = synchronized(guard) {
         JSONObject().put("targetPackage", criterion?.packageName.orEmpty()).put("foregroundPackage", foreground)
-            .put("launchUptimeMs", launchAt).put("firstMatchUptimeMs", firstMatch).put("confirmedStableUptimeMs", stableAt)
-            .put("lastMissingUptimeMs", lastMissing).put("assisted", assisted).put("actions", JSONArray(events.toString()))
-            .put("interrupted", interrupted)
+            .put("launchUptimeMs", launchAt).put("firstMatchUptimeMs", marker.first).put("confirmedStableUptimeMs", marker.stable)
+            .put("lastMissingUptimeMs", marker.missing).put("assisted", assisted).put("actions", JSONArray(events.toString()))
+            .put("interrupted", interrupted).put("blockerVisible", blockerVisible).put("blockerScanComplete", blockerScanComplete)
+            .put("blockerSignals", JSONArray(blockers.toString()))
             .put("observerError", observerError).put("maxObservedScanGapMs", maxScanGap)
-            .put("criterion", criterion?.json()).put("observationMethod", "accessibility-visible-enabled-exact-match; stable>=500ms; nominal-poll=200ms")
-            .put("observedUpperMs", if (firstMatch >= launchAt) firstMatch - launchAt else -1)
-            .put("observedLowerMs", (lastMissing - launchAt).coerceAtLeast(0))
+            .put("criterion", criterion?.json()).put("observationMethod", "accessibility-visible-enabled-exact-match; stable>=${if (criterion?.autoContinue == true) 1500 else 500}ms; nominal-poll=200ms; bounded-ad-hint-scan")
+            .put("observedUpperMs", if (marker.first >= launchAt) marker.first - launchAt else -1)
+            .put("observedLowerMs", (marker.missing - launchAt).coerceAtLeast(0))
     }
-    fun awaitReady(launchAt: Long, timeoutMs: Long): JSONObject {
+    override fun awaitReady(launchAt: Long, timeoutMs: Long): JSONObject {
         val deadline = launchAt + timeoutMs
         while (!BenchEngine.cancel && instance === this) {
             val snapshot = evidence(launchAt)
@@ -125,7 +147,7 @@ class ReadinessService : AccessibilityService() {
         }
         return evidence(launchAt).put("status", "timeout")
     }
-    fun ask(title: String, message: String, choices: List<String>): Int {
+    override fun ask(title: String, message: String, choices: List<String>): Int {
         val latch = CountDownLatch(1)
         var answer = -1
         handler.post {
@@ -153,7 +175,7 @@ class ReadinessService : AccessibilityService() {
         }
         return answer
     }
-    fun allowInteraction(message: String): Boolean {
+    override fun allowInteraction(message: String): Boolean {
         val latch = CountDownLatch(1)
         var continued = false
         handler.post {

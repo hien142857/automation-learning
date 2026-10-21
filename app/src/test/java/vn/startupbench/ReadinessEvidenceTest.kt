@@ -19,6 +19,26 @@ class ReadinessEvidenceTest {
     private fun session(evidence: JSONObject?) = JSONObject().put("samples", JSONArray().put(JSONObject()
         .put("mode", "COLD").put("raw", "Status: ok\nLaunchState: COLD\nTotalTime: 100\nBenchLaunchUptimeMs: 1000\n")
         .apply { if (evidence != null) put("evidence", evidence) }))
+    private fun automatic() = proof().put("testerConfirmed", false)
+        .put("confirmationMethod", "automatic-marker-v1").put("automaticConfirmed", true)
+        .put("blockerScanComplete", true).put("blockerVisible", false).put("confirmedStableUptimeMs", 3500)
+    @Test fun automaticEvidenceIsExplicitAndNeverFabricatesTesterConfirmation() {
+        assertTrue(EvidencePolicy.accepted(automatic()))
+        assertFalse(EvidencePolicy.accepted(automatic().put("testerConfirmed", true)))
+        assertFalse(EvidencePolicy.accepted(automatic().put("automaticConfirmed", false)))
+        assertFalse(EvidencePolicy.accepted(automatic().put("confirmedStableUptimeMs", 3499)))
+        assertFalse(EvidencePolicy.accepted(automatic().put("criterion", ReadyCriterion("com.example", "com.example:id/home", "", autoContinue = false).json())))
+    }
+    @Test fun automaticProofRejectsVisibleAdsOrIncompleteScans() {
+        assertFalse(EvidencePolicy.accepted(automatic().put("blockerVisible", true)))
+        assertFalse(EvidencePolicy.accepted(automatic().put("blockerScanComplete", false)))
+        assertFalse(EvidencePolicy.accepted(automatic().apply { remove("blockerVisible") }))
+    }
+    @Test fun automaticallyResumedAdSampleGoesToAssistedStatistics() {
+        val p = automatic().put("assisted", true).put("status", "assisted_ui")
+        assertTrue(EvidencePolicy.assisted(p)); assertFalse(EvidencePolicy.accepted(p))
+        assertEquals(listOf(1000L), session(p).assistedValues("COLD"))
+    }
     @Test fun androidColdTimingAloneDoesNotProveTheAppPassedSplash() {
         val s = session(null)
         assertTrue(s.androidResults().single().valid)

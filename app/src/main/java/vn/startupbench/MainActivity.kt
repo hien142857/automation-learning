@@ -46,6 +46,8 @@ class MainActivity : Activity() {
     private var appPicker: AppPickerDialog? = null
     private var criterionText: EditText? = null
     private var criterionId: EditText? = null
+    private var autoContinueInput: CheckBox? = null
+    private var blockerInput: EditText? = null
     private val permissionListener = Shizuku.OnRequestPermissionResultListener { _, result ->
         runOnUiThread {
             if (result == PackageManager.PERMISSION_GRANTED) BenchEngine.connect(this, retry = true)
@@ -194,7 +196,8 @@ class MainActivity : Activity() {
             packageInput = input("com.example.app", selectedPackage) {
                 selectedPackage = it; updateSelection()
                 val saved = ReadyCriterion.load(this@MainActivity, it.trim())
-                criterionText?.setText(saved.text); criterionId?.setText(saved.resourceId); refreshReadiness()
+                criterionText?.setText(saved.text); criterionId?.setText(saved.resourceId)
+                autoContinueInput?.isChecked = saved.autoContinue; blockerInput?.setText(saved.blockerText); refreshReadiness()
             }; addView(packageInput)
             selectionPreview = LinearLayout(this@MainActivity); addView(selectionPreview); updateSelection()
             addView(button("Chọn app trên điện thoại") { chooseApp() })
@@ -202,16 +205,26 @@ class MainActivity : Activity() {
         }
         card {
             addView(text("02   Xác định nội dung đích", 18f))
-            addView(text("Chọn chữ xuất hiện ở màn hình dùng được hoặc resource ID đầy đủ, không phải Splash. Nếu nhập cả hai thì phải cùng khớp. App sẽ kiểm tra mốc và hỏi bạn xác nhận sau mỗi mẫu.", 13f, muted))
+            addView(text("Chọn chữ xuất hiện ở màn hình dùng được hoặc resource ID đầy đủ, không phải Splash. Nếu nhập cả hai thì phải cùng khớp. Mặc định tự tiếp tục khi mốc ổn định 1,5 giây và không thấy dấu hiệu ads. Bạn chỉ cần đóng/bỏ qua ads trong app đích.", 13f, muted))
             val saved = ReadyCriterion.load(this@MainActivity, selectedPackage.trim())
             criterionText = input("Chữ chính xác, ví dụ: Tạo video", saved.text) { value ->
-                ReadyCriterion.save(this@MainActivity, ReadyCriterion(selectedPackage.trim(), criterionId?.text?.toString()?.trim() ?: saved.resourceId, value.trim()))
+                ReadyCriterion.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(resourceId = criterionId?.text?.toString()?.trim() ?: saved.resourceId, text = value.trim()))
                 refreshReadiness()
             }; addView(criterionText)
             criterionId = input("Resource ID, ví dụ com.example:id/home", saved.resourceId) { value ->
-                ReadyCriterion.save(this@MainActivity, ReadyCriterion(selectedPackage.trim(), value.trim(), criterionText?.text?.toString()?.trim().orEmpty()))
+                ReadyCriterion.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(resourceId = value.trim(), text = criterionText?.text?.toString()?.trim().orEmpty()))
                 refreshReadiness()
             }; addView(criterionId)
+            autoContinueInput = CheckBox(this@MainActivity).apply {
+                text = "Tự tiếp tục khi nội dung đích ổn định"; setTextColor(Color.WHITE); isChecked = saved.autoContinue
+                setOnCheckedChangeListener { _, checked ->
+                    ReadyCriterion.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(autoContinue = checked))
+                }
+            }; addView(autoContinueInput)
+            blockerInput = input("Chữ trên ads cần chờ biến mất (không bắt buộc)", saved.blockerText) { value ->
+                ReadyCriterion.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(blockerText = value.trim()))
+            }; addView(blockerInput)
+            addView(text("Nhận diện ads qua chữ, mô tả và ID phổ biến; không nhận ra mọi ads, nhất là Canvas/WebView. Hãy chọn mốc chỉ xuất hiện khi nội dung thực sự dùng được. Có thể tắt tự tiếp tục để xác nhận từng mẫu. Công cụ không tự bấm quảng cáo.", 12f, muted))
             addView(button("Bật quan sát mốc UI / hướng dẫn") {
                 AlertDialog.Builder(this@MainActivity).setTitle("Quan sát mốc UI")
                     .setMessage("Trong Trợ năng, bật Startup Bench · Quan sát mốc UI. Công cụ đọc mốc của app được chọn và ghi nhận lần bấm; không ghi nội dung nhập. Nếu Android chặn APK cài ngoài, mở Thông tin ứng dụng → menu → Cho phép cài đặt bị hạn chế, rồi bật lại.\n\nHãy mở app đích trước để xác định chữ ở màn hình nội dung. Nếu app không cung cấp mốc qua trợ năng (ví dụ Canvas/WebView bảo vệ), công cụ sẽ báo không xác minh được và không tạo kết quả giả.")
@@ -221,7 +234,7 @@ class MainActivity : Activity() {
         }
         card {
             addView(text("03   Thiết lập phiên đo có xác minh", 18f))
-            addView(text("Mỗi mẫu cần bạn xác nhận mốc không bị Splash/ads che. Lần có ads/thao tác được lưu riêng. Quá 60 giây chưa thấy mốc sẽ có hướng dẫn thử lại/bỏ qua/dừng.", 13f, muted))
+            addView(text("Chế độ tự tiếp tục không hỏi sau mỗi mẫu. Lần phát hiện dấu hiệu ads hoặc thao tác được lưu riêng; bằng chứng ghi rõ xác nhận tự động hay bởi tester. Quá 60 giây chưa thấy mốc sẽ có hướng dẫn thử lại/bỏ qua/dừng.", 13f, muted))
             listOf("COLD" to "Cold · dừng tiến trình trước khi mở", "WARM" to "Warm · tạo lại task / Activity", "HOT" to "Hot · đưa Activity trở lại foreground").forEach { (mode, label) ->
                 addView(CheckBox(this@MainActivity).apply {
                     text = label; setTextColor(Color.WHITE); isChecked = mode in modes
@@ -251,7 +264,7 @@ class MainActivity : Activity() {
         }
         card {
             addView(text("Đọc số đo đúng cách", 17f))
-            addView(text("Android TotalTime là thời gian Activity Manager báo, có thể chỉ đến Splash. Chỉ mẫu có LaunchState đúng, thấy mốc UI ổn định và được tester xác nhận mới được xác minh. Thời gian đến mốc là quan sát trợ năng từ trước lệnh mở, không phải TTFD chuẩn và có độ trễ quan sát. So sánh mặc định chỉ dùng nhóm không có ads/thao tác.", 13f, muted))
+            addView(text("Android TotalTime là thời gian Activity Manager báo, có thể chỉ đến Splash. Mẫu cần LaunchState đúng và mốc UI ổn định. Bằng chứng ghi rõ theo dõi tự động hay tester xác nhận. Không ghi nhận ads không bảo đảm không có ads: mốc phải được chọn đúng và ads phải có dấu hiệu trợ năng. Thời gian đến mốc là quan sát trợ năng từ trước lệnh mở, không phải TTFD chuẩn và có độ trễ quan sát. So sánh mặc định chỉ dùng nhóm không có ads/thao tác.", 13f, muted))
         }
         BenchEngine.session?.let { item -> if (!BenchEngine.running) renderSummary(item) }
         refreshReadiness()
@@ -320,6 +333,9 @@ class MainActivity : Activity() {
             }
             addView(text("${item.optString("device")} · Android ${item.optString("android")}\n${date(item)} · $status\n${item.optString("note")}", 12f, muted))
             addView(text("Pin ${item.optInt("batteryLevel", -1)}% · ${item.optInt("batteryTempTenthsC", -1) / 10.0}°C · tiết kiệm pin: ${item.optBoolean("powerSave")}", 12f, muted))
+            if (item.optJSONObject("readinessCriterion")?.optBoolean("autoContinue", false) == true)
+                addView(text("Theo dõi tự động · Không ads = không ghi nhận dấu hiệu, không bảo đảm nhận ra mọi ads. Kiểm tra mốc nội dung trước khi đối chứng.", 12f, muted))
+            else addView(text("Xác nhận mốc bởi tester", 12f, muted))
             addView(text("Trung bình = tổng thời gian / số mẫu được xác nhận trong CÙNG nhóm. Không gộp ads và không ads.", 13f, muted))
             listOf("COLD", "WARM", "HOT").forEach { mode ->
                 addView(text(mode, 23f, accent).apply { setTypeface(null, Typeface.BOLD) })
