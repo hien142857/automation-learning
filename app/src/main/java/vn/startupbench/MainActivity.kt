@@ -44,6 +44,8 @@ class MainActivity : Activity() {
     private var wasRunning = false
     private var pendingCsv = ""
     private var appPicker: AppPickerDialog? = null
+    private var observeUi = false
+    private val readinessInputs = ReadinessInputs()
     private var criterionText: EditText? = null
     private var criterionId: EditText? = null
     private var autoContinueInput: CheckBox? = null
@@ -73,6 +75,7 @@ class MainActivity : Activity() {
         selectedPackage = state?.getString("package") ?: ""
         note = state?.getString("note") ?: ""
         repeats = state?.getInt("repeats", 5) ?: 5
+        observeUi = state?.getBoolean("observeUi", false) ?: false
         state?.getStringArrayList("modes")?.let { modes.clear(); modes.addAll(it) }
         tab = state?.getInt("tab", 0) ?: 0
         pendingCsv = state?.getString("csv") ?: ""
@@ -87,6 +90,7 @@ class MainActivity : Activity() {
     override fun onPause() { super.onPause(); handler.removeCallbacks(tick) }
     override fun onDestroy() { appPicker?.dismiss(); Shizuku.removeRequestPermissionResultListener(permissionListener); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
+        out.putBoolean("observeUi", observeUi)
         out.putString("package", selectedPackage); out.putString("note", note); out.putInt("repeats", repeats)
         out.putStringArrayList("modes", ArrayList(modes)); out.putInt("tab", tab); out.putString("csv", pendingCsv)
         super.onSaveInstanceState(out)
@@ -112,7 +116,7 @@ class MainActivity : Activity() {
         val baseState = StartReadiness.evaluate(binder, permission, BenchEngine.remote != null, BenchEngine.running,
             selectedPackage.trim(), modes.isNotEmpty(), BenchEngine.connectionError)
         val state = when {
-            baseState.enabled && ReadinessService.instance == null -> StartReadiness(false, "Cần bật trợ năng quan sát mốc UI ở phần 02.")
+            baseState.enabled && observeUi && ReadinessService.instance == null -> StartReadiness(false, "Cần bật trợ năng quan sát mốc UI ở phần 02.")
             else -> baseState
         }
         statusText?.text = when {
@@ -142,6 +146,7 @@ class MainActivity : Activity() {
     }
     private fun render() {
         statusText = null; progressText = null; startButton = null; readinessText = null
+        criterionText = null; criterionId = null; autoContinueInput = null; blockerInput = null
         root = column().apply { setBackgroundColor(bg); setPadding(dp(20), dp(14), dp(20), 0) }
         root.setOnApplyWindowInsetsListener { view, insets ->
             val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
@@ -189,51 +194,65 @@ class MainActivity : Activity() {
             statusText = text("Đang kiểm tra Shizuku…", 16f, accent); addView(statusText)
             addView(text("Android 11+ • không cần root • cần cấp quyền debugging", 13f, muted))
             addView(button("Kết nối / hướng dẫn") { connect() })
+            addView(button("Nhập báo cáo TTID · Macrobenchmark") {
+                startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE); type = "application/json"
+                }, 9)
+            })
         }
         card {
             addView(text("01   Chọn ứng dụng", 18f))
             packageInput = input("com.example.app", selectedPackage) {
                 selectedPackage = it; updateSelection()
                 val saved = ReadyCriterion.load(this@MainActivity, it.trim())
-                criterionText?.setText(saved.text); criterionId?.setText(saved.resourceId)
-                autoContinueInput?.isChecked = saved.autoContinue; blockerInput?.setText(saved.blockerText); refreshReadiness()
+                readinessInputs.load {
+                    criterionText?.setText(saved.text); criterionId?.setText(saved.resourceId)
+                    autoContinueInput?.isChecked = saved.autoContinue; blockerInput?.setText(saved.blockerText)
+                }; refreshReadiness()
             }; addView(packageInput)
             selectionPreview = LinearLayout(this@MainActivity); addView(selectionPreview); updateSelection()
             addView(button("Chọn app trên điện thoại") { chooseApp() })
             addView(text("Chỉ đo app có màn hình launcher, cùng hồ sơ người dùng.", 12f, muted))
         }
         card {
-            addView(text("02   Tự phát hiện giao diện", 18f))
-            addView(text("Không cần nhập mốc. App tự tìm giao diện có nội dung và khả năng thao tác, ổn định 1,5 giây và không thấy dấu hiệu ads. Bạn chỉ cần đóng/bỏ qua ads. Không đủ bằng chứng sẽ báo lý do, không trả số đo thành công.", 13f, muted))
-            val saved = ReadyCriterion.load(this@MainActivity, selectedPackage.trim())
-            criterionText = input("Nâng cao · chữ mốc (tùy chọn; để trống để tự tìm)", saved.text) { value ->
-                ReadyCriterion.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(resourceId = criterionId?.text?.toString()?.trim() ?: saved.resourceId, text = value.trim()))
-                refreshReadiness()
-            }; addView(criterionText)
-            criterionId = input("Nâng cao · resource ID (tùy chọn)", saved.resourceId) { value ->
-                ReadyCriterion.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(resourceId = value.trim(), text = criterionText?.text?.toString()?.trim().orEmpty()))
-                refreshReadiness()
-            }; addView(criterionId)
-            autoContinueInput = CheckBox(this@MainActivity).apply {
-                text = "Tự tiếp tục (luôn bật khi không nhập mốc)"; setTextColor(Color.WHITE); isChecked = saved.autoContinue
-                setOnCheckedChangeListener { _, checked ->
-                    ReadyCriterion.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(autoContinue = checked))
-                }
-            }; addView(autoContinueInput)
-            blockerInput = input("Chữ trên ads cần chờ biến mất (không bắt buộc)", saved.blockerText) { value ->
-                ReadyCriterion.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(blockerText = value.trim()))
-            }; addView(blockerInput)
-            addView(text("Nhận diện ads qua chữ, mô tả và ID phổ biến; không nhận ra mọi ads, nhất là Canvas/WebView. Hãy chọn mốc chỉ xuất hiện khi nội dung thực sự dùng được. Có thể tắt tự tiếp tục để xác nhận từng mẫu. Công cụ không tự bấm quảng cáo.", 12f, muted))
-            addView(button("Bật quan sát mốc UI / hướng dẫn") {
-                AlertDialog.Builder(this@MainActivity).setTitle("Quan sát mốc UI")
-                    .setMessage("Trong Trợ năng, bật Startup Bench · Quan sát mốc UI. Công cụ đọc mốc của app được chọn và ghi nhận lần bấm; không ghi nội dung nhập. Nếu Android chặn APK cài ngoài, mở Thông tin ứng dụng → menu → Cho phép cài đặt bị hạn chế, rồi bật lại.\n\nHãy mở app đích trước để xác định chữ ở màn hình nội dung. Nếu app không cung cấp mốc qua trợ năng (ví dụ Canvas/WebView bảo vệ), công cụ sẽ báo không xác minh được và không tạo kết quả giả.")
-                    .setPositiveButton("Mở Trợ năng") { _, _ -> startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-                    .setNegativeButton("Đóng", null).show()
+            addView(text("02   Chọn phép đo", 18f))
+            addView(text("Mặc định: đo Android TotalTime bằng Shizuku, không cần Trợ năng. Tỷ lệ chậm tham khảo: Cold > 5.000 ms, Warm > 2.000 ms, Hot > 1.500 ms. Đây là mẫu lab, không phải tỷ lệ Android vitals trên Play Console. Muốn đo TTID bằng trace, dùng bộ Macrobenchmark đi kèm project.", 13f, muted))
+            addView(CheckBox(this@MainActivity).apply {
+                text = "Đo thêm thời gian đến nội dung UI (cần Trợ năng)"; setTextColor(Color.WHITE); isChecked = observeUi
+                setOnCheckedChangeListener { _, checked -> observeUi = checked; render() }
             })
+            if (observeUi) {
+                addView(text("Không cần nhập mốc. App tự tìm giao diện có nội dung và khả năng thao tác, ổn định 1,5 giây và không thấy dấu hiệu ads. Bạn chỉ cần đóng/bỏ qua ads. Không đủ bằng chứng sẽ báo lý do, không trả số đo thành công.", 13f, muted))
+                val saved = ReadyCriterion.load(this@MainActivity, selectedPackage.trim())
+                criterionText = input("Nâng cao · chữ mốc (tùy chọn; để trống để tự tìm)", saved.text) { value ->
+                    readinessInputs.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(resourceId = criterionId?.text?.toString()?.trim() ?: saved.resourceId, text = value.trim()))
+                    refreshReadiness()
+                }; addView(criterionText)
+                criterionId = input("Nâng cao · resource ID (tùy chọn)", saved.resourceId) { value ->
+                    readinessInputs.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(resourceId = value.trim(), text = criterionText?.text?.toString()?.trim().orEmpty()))
+                    refreshReadiness()
+                }; addView(criterionId)
+                autoContinueInput = CheckBox(this@MainActivity).apply {
+                    text = "Tự tiếp tục (luôn bật khi không nhập mốc)"; setTextColor(Color.WHITE); isChecked = saved.autoContinue
+                    setOnCheckedChangeListener { _, checked ->
+                        readinessInputs.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(autoContinue = checked))
+                    }
+                }; addView(autoContinueInput)
+                blockerInput = input("Chữ trên ads cần chờ biến mất (không bắt buộc)", saved.blockerText) { value ->
+                    readinessInputs.save(this@MainActivity, ReadyCriterion.load(this@MainActivity, selectedPackage.trim()).copy(blockerText = value.trim()))
+                }; addView(blockerInput)
+                addView(text("Nhận diện ads qua chữ, mô tả và ID phổ biến; không nhận ra mọi ads, nhất là Canvas/WebView. Hãy chọn mốc chỉ xuất hiện khi nội dung thực sự dùng được. Có thể tắt tự tiếp tục để xác nhận từng mẫu. Công cụ không tự bấm quảng cáo.", 12f, muted))
+                addView(button("Bật quan sát mốc UI / hướng dẫn") {
+                    AlertDialog.Builder(this@MainActivity).setTitle("Quan sát mốc UI")
+                        .setMessage("Trong Trợ năng, bật Startup Bench · Quan sát mốc UI. Công cụ đọc mốc của app được chọn và ghi nhận lần bấm; không ghi nội dung nhập. Nếu Android chặn APK cài ngoài, mở Thông tin ứng dụng → menu → Cho phép cài đặt bị hạn chế, rồi bật lại.\n\nHãy mở app đích trước để xác định chữ ở màn hình nội dung. Nếu app không cung cấp mốc qua trợ năng (ví dụ Canvas/WebView bảo vệ), công cụ sẽ báo không xác minh được và không tạo kết quả giả.")
+                        .setPositiveButton("Mở Trợ năng") { _, _ -> startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                        .setNegativeButton("Đóng", null).show()
+                })
+            }
         }
         card {
-            addView(text("03   Thiết lập phiên đo có xác minh", 18f))
-            addView(text("Chế độ tự tiếp tục không hỏi sau mỗi mẫu. Lần phát hiện dấu hiệu ads hoặc thao tác được lưu riêng; bằng chứng ghi rõ xác nhận tự động hay bởi tester. Quá 60 giây chưa thấy mốc sẽ có hướng dẫn thử lại/bỏ qua/dừng.", 13f, muted))
+            addView(text("03   Thiết lập phiên đo", 18f))
+            if (observeUi) addView(text("Chế độ tự tiếp tục không hỏi sau mỗi mẫu. Lần phát hiện dấu hiệu ads hoặc thao tác được lưu riêng; bằng chứng ghi rõ xác nhận tự động hay bởi tester. Quá 60 giây chưa thấy mốc sẽ có hướng dẫn thử lại/bỏ qua/dừng.", 13f, muted))
             listOf("COLD" to "Cold · dừng tiến trình trước khi mở", "WARM" to "Warm · tạo lại task / Activity", "HOT" to "Hot · đưa Activity trở lại foreground").forEach { (mode, label) ->
                 addView(CheckBox(this@MainActivity).apply {
                     text = label; setTextColor(Color.WHITE); isChecked = mode in modes
@@ -310,7 +329,7 @@ class MainActivity : Activity() {
             val info = packageManager.getPackageInfo(pkg, 0)
             BenchEngine.start(this, component.flattenToString(), pkg,
                 packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString(),
-                info.versionName ?: "?", info.longVersionCode, modes.toList(), repeats, note)
+                info.versionName ?: "?", info.longVersionCode, modes.toList(), repeats, note, observeUi)
             wasRunning = true; render()
         } catch (e: Exception) { startError(e.message ?: "Không thể bắt đầu đo") }
     }
@@ -320,8 +339,31 @@ class MainActivity : Activity() {
         BenchEngine.progress = value
         AlertDialog.Builder(this).setTitle("Chưa bắt đầu phiên đo").setMessage(reason).setPositiveButton("Đã hiểu", null).show()
     }
-    private fun renderSummary(item: JSONObject) {
+    private fun renderStartupSummary(item: JSONObject) {
         card {
+            val ttid = item.optString("startupSource") == MacrobenchmarkReport.SOURCE
+            addView(text(if (ttid) "Startup TTID · Macrobenchmark" else "Startup Android · số đo tham khảo", 20f, accent))
+            addView(text("${item.optString("label")} · v${item.optString("version")} · ${item.optString("status")}\n" +
+                if (ttid) "Nguồn: StartupTimingMetric / Perfetto. Bản build do tester ghi khi xuất báo cáo. Đây là TTID lab, không phải tỷ lệ 28 ngày của Play Console."
+                else "Nguồn: ActivityManager TotalTime. Không phải TTID từ Perfetto hoặc dữ liệu Play Console. Mốc UI và ads không quyết định mẫu Android hợp lệ.", 13f, muted))
+            listOf("COLD", "WARM", "HOT").forEach { mode ->
+                val stats = StartupVitals.from(item, mode)
+                val rate = stats.slowPercent?.let { String.format(Locale.US, "%.2f%%", it) } ?: "chưa có dữ liệu"
+                addView(text("$mode · chậm $rate", 20f, accent))
+                addView(text("${stats.slow}/${stats.measured} mẫu đo được vượt ${stats.thresholdMs} ms · ${stats.missing} mẫu thiếu/lỗi · ${stats.attempted} lần ghi nhận", 13f, muted))
+                if (stats.missing > 0) addView(text("Tỷ lệ chỉ tính trên mẫu đo được; dữ liệu thiếu có thể làm lệch kết quả. Không coi mẫu thiếu là nhanh hoặc 0 ms.", 12f, muted))
+            }
+            addView(text(if (ttid) "Tỷ lệ lab trên thiết bị ghi trong báo cáo; giữ JSON gốc và Perfetto trace để đối chứng. Kiểu chưa chạy không có tỷ lệ."
+                else "Tỷ lệ của phiên lab trên thiết bị này; không đại diện 28 ngày hoặc nhóm thiết bị người dùng. Hot thiếu TotalTime sẽ được báo thiếu, không thay bằng WaitTime.", 12f, muted))
+            if (!item.optBoolean("observeUi", true)) {
+                addView(button("Chi tiết từng lần / log Android") { details(item) })
+                addView(button("Xuất CSV") { export(item) })
+            }
+        }
+    }
+    private fun renderSummary(item: JSONObject) {
+        renderStartupSummary(item)
+        if (item.optBoolean("observeUi", true)) card {
             addView(text("${item.optString("label")} · ${item.optString("version")} (${item.optLong("versionCode")})", 18f))
             val status = when (item.optString("status")) {
                 "completed" -> "Hoàn tất"
@@ -384,9 +426,8 @@ class MainActivity : Activity() {
                 })
                 addView(text("${date(item)}\n${item.optString("package")}\n${item.optString("note")}", 13f, muted))
                 listOf("COLD", "WARM", "HOT").forEach { mode ->
-                    val cohort = if (item.readyValues(mode).isNotEmpty()) MeasurementCohort.AUTOMATIC else MeasurementCohort.ASSISTED
-                    val stats = SampleStatistics.of(item.cohortValues(mode, cohort))
-                    addView(text("$mode · TB ${stats.mean?.let { ms(it) } ?: "chưa có số liệu"} · ${stats.count} mẫu · ${cohort.label}", 14f))
+                    val stats = StartupVitals.from(item, mode)
+                    addView(text("$mode · chậm ${stats.slow}/${stats.measured} · thiếu/lỗi ${stats.missing}", 14f))
                 }
                 addView(button("Xem phiên đo") {
                     content.removeAllViews(); content.addView(button("← Lịch sử") { render() }); renderSummary(item)
@@ -408,17 +449,36 @@ class MainActivity : Activity() {
         ComparisonScreen(this, content) { render() }.show(base, candidate)
     }
     private fun details(item: JSONObject) {
+        if (item.optString("startupSource") == MacrobenchmarkReport.SOURCE) {
+            val body = text(item.getJSONObject("importedReport").toString(2), 13f, Color.BLACK)
+            AlertDialog.Builder(this).setTitle("Bằng chứng TTID lab").setView(ScrollView(this).apply { addView(body) }).setPositiveButton("Đóng", null).show()
+            return
+        }
         val samples = item.optJSONArray("samples")
-        val body = text(item.optString("errorDetail").let { if (it.isBlank()) "" else "$it\n\n" } + item.results().mapIndexed { index, r ->
-            "#${index + 1} ${r.mode} · ${if (r.valid) "Có bằng chứng quan sát UI; Android TotalTime ${r.totalMs?.let { "$it ms" } ?: "không có"}" else "CHƯA XÁC MINH TỰ ĐỘNG: ${r.error}"}\n${r.raw}\nBằng chứng UI / hành động:\n${samples?.getJSONObject(index)?.optJSONObject("evidence")?.toString(2) ?: "Không có: dữ liệu cũ không chứng minh đã qua Splash."}"
+        val body = text(item.optString("errorDetail").let { if (it.isBlank()) "" else "$it\n\n" } + (if (!item.optBoolean("observeUi", true)) item.androidResults() else item.results()).mapIndexed { index, r ->
+            "#${index + 1} ${r.mode} · ${if (r.valid) "Android TotalTime ${r.totalMs?.let { "$it ms" } ?: "không có"}" else "CHƯA XÁC MINH TỰ ĐỘNG: ${r.error}"}\n${r.raw}\nBằng chứng UI / hành động:\n${samples?.getJSONObject(index)?.optJSONObject("evidence")?.toString(2) ?: "Không có: dữ liệu cũ không chứng minh đã qua Splash."}"
         }.joinToString("\n\n"), 13f, Color.BLACK).apply { setTextIsSelectable(true); setPadding(dp(18), 0, dp(18), 0) }
         AlertDialog.Builder(this).setTitle("Mẫu đo · log gốc").setView(ScrollView(this).apply { addView(body) }).setPositiveButton("Đóng", null).show()
     }
     private fun export(item: JSONObject) {
+        if (item.optString("startupSource") == MacrobenchmarkReport.SOURCE) {
+            val rows = item.getJSONArray("ttidSamples")
+            pendingCsv = "package,version,fingerprint,mode,source,ttidMs,thresholdMs,slow\r\n" + (0 until rows.length()).joinToString("\r\n") { i ->
+                val row = rows.getJSONObject(i); val mode = row.getString("mode")
+                val value = if (row.has("ttidMs")) row.getDouble("ttidMs") else null
+                listOf(item.optString("package"), item.optString("version"), item.optString("fingerprint"), mode,
+                    MacrobenchmarkReport.SOURCE, value ?: "", StartupVitals.threshold(mode), value?.let { it > StartupVitals.threshold(mode) } ?: "")
+                    .joinToString(",") { "\"${it.toString().replace("\"", "\"\"")}\"" }
+            }
+            startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE); type = "text/csv"; putExtra(Intent.EXTRA_TITLE, "ttid-${item.getString("id")}.csv")
+            }, 8)
+            return
+        }
         fun csv(value: Any?) = "\"${value.toString().replace("\"", "\"\"")}\""
-        val header = listOf("session", "package", "version", "versionCode", "device", "android", "fingerprint", "protocol", "sessionStatus", "note", "sample", "requested", "actual", "verifiedAutomaticUi", "androidTotalTimeMs", "androidWaitTimeMs", "error", "raw", "uiEvidenceJson")
-        pendingCsv = header.joinToString(",") + "\r\n" + item.results().mapIndexed { index, r ->
-            listOf(item.optString("id"), item.optString("package"), item.optString("version"), item.optLong("versionCode"), item.optString("device"), item.optString("android"), item.optString("fingerprint"), item.optString("protocol"), item.optString("status"), item.optString("note"), index + 1, r.mode, r.state ?: "", r.valid, r.totalMs ?: "", r.waitMs ?: "", r.error ?: "", r.raw, item.optJSONArray("samples")?.getJSONObject(index)?.optJSONObject("evidence")?.toString() ?: "").joinToString(",") { csv(it) }
+        val header = listOf("session", "package", "version", "versionCode", "device", "android", "fingerprint", "protocol", "sessionStatus", "note", "sample", "requested", "actual", "verifiedAutomaticUi", "androidTimingValid", "slowThresholdMs", "slowReference", "startupSource", "androidTotalTimeMs", "androidWaitTimeMs", "error", "raw", "uiEvidenceJson")
+        pendingCsv = header.joinToString(",") + "\r\n" + item.androidResults().mapIndexed { index, r ->
+            listOf(item.optString("id"), item.optString("package"), item.optString("version"), item.optLong("versionCode"), item.optString("device"), item.optString("android"), item.optString("fingerprint"), item.optString("protocol"), item.optString("status"), item.optString("note"), index + 1, r.mode, r.state ?: "", item.results()[index].uiVerified, r.valid, StartupVitals.threshold(r.mode), if (r.valid) r.totalMs!! > StartupVitals.threshold(r.mode) else "", "activity-manager-am-start-W", r.totalMs ?: "", r.waitMs ?: "", r.error ?: "", r.raw, item.optJSONArray("samples")?.getJSONObject(index)?.optJSONObject("evidence")?.toString() ?: "").joinToString(",") { csv(it) }
         }.joinToString("\r\n")
         startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE); type = "text/csv"; putExtra(Intent.EXTRA_TITLE, "startup-${item.getString("id")}.csv")
@@ -427,6 +487,22 @@ class MainActivity : Activity() {
     @Deprecated("Android Activity callback")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 9 && resultCode == RESULT_OK) data?.data?.let { uri ->
+            runCatching {
+                val bytes = checkNotNull(contentResolver.openInputStream(uri)).use { stream ->
+                    val buffer = java.io.ByteArrayOutputStream()
+                    val chunk = ByteArray(8192)
+                    while (true) {
+                        val size = stream.read(chunk); if (size < 0) break
+                        require(buffer.size() + size <= 8 * 1024 * 1024) { "Báo cáo quá lớn (tối đa 8 MB)" }
+                        buffer.write(chunk, 0, size)
+                    }
+                    buffer.toByteArray()
+                }
+                MacrobenchmarkReport.read(bytes.toString(Charsets.UTF_8)).also { item -> History(this).use { it.save(item) } }
+            }.onSuccess { tab = 1; render(); message("Đã nhập báo cáo TTID lab.") }
+                .onFailure { message("Không nhập được báo cáo: ${it.message}") }
+        }
         if (requestCode == 8 && resultCode == RESULT_OK) data?.data?.let { uri ->
             runCatching { checkNotNull(contentResolver.openOutputStream(uri)).bufferedWriter(Charsets.UTF_8).use { it.write(pendingCsv) } }
                 .onSuccess { message("Đã xuất CSV."); pendingCsv = "" }.onFailure { message("Không lưu được CSV: ${it.message}") }

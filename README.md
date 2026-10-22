@@ -1,5 +1,11 @@
 # Startup Bench
 
+## Kiểm thử Android vitals (0.5.0)
+
+Luồng TTID mới dùng AndroidX Macrobenchmark / Perfetto để đo Cold/Warm/Hot và tính tỷ lệ startup chậm theo ngưỡng 5.000 / 2.000 / 1.500 ms. Có thể nhập báo cáo vào app để lưu lịch sử, so sánh cùng nguồn và xuất CSV. [Hướng dẫn tester và lệnh chạy](docs/android-vitals-testing.md).
+
+Phần Shizuku trong APK đo ActivityManager TotalTime **tham khảo**, mặc định không cần Trợ năng. Quan sát nội dung UI là tuỳ chọn riêng; không dùng thời gian này thay TTID hoặc tỷ lệ 28 ngày của Play Console. Hướng dẫn quan sát UI bên dưới áp dụng khi bật tuỳ chọn đó.
+
 Ứng dụng Android dành cho tester đo startup của app khác bằng **Shizuku**, lưu lịch sử và so sánh các phiên bản. Kotlin, Android native Views, SQLite cục bộ; không gửi kết quả lên máy chủ. Android 11+ (API 30).
 
 ## Sử dụng

@@ -23,8 +23,14 @@ jobs:
           packages: 'platforms;android-35 build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v4
       - name: Test, lint and build APK
-        run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon
+        run: ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :macrobenchmark:assembleBenchmark --no-daemon
+      - name: Verify TTID report calculations
+        run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
       - uses: actions/upload-artifact@v4
         with:
           name: startup-bench-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: startup-bench-ttid-runner
+          path: macrobenchmark/build/outputs/apk/benchmark/*.apk

@@ -62,14 +62,14 @@ object BenchEngine {
     }
 
     @Synchronized fun start(context: Context, component: String, pkg: String, label: String, version: String,
-                            versionCode: Long, modes: List<String>, repeats: Int, note: String) {
+                            versionCode: Long, modes: List<String>, repeats: Int, note: String, observeUi: Boolean = false) {
         check(!running) { "Đã có phiên đo đang chạy." }
         check(remote?.asBinder()?.isBinderAlive == true) { "Dịch vụ đo chưa kết nối. Hãy kết nối lại Shizuku." }
         require(modes.isNotEmpty() && modes.all { it in listOf("COLD", "WARM", "HOT") }) { "Chọn kiểu đo hợp lệ." }
         require(repeats in listOf(1, 3, 5, 10)) { "Số lần đo không hợp lệ." }
-        val observer = checkNotNull(ReadinessService.instance) { "Cần bật trợ năng quan sát mốc UI trước khi đo." }
+        val observer = if (observeUi) checkNotNull(ReadinessService.instance) { "Cần bật trợ năng quan sát mốc UI trước khi đo." } else null
         val criterion = ReadyCriterion.load(context, pkg)
-        require(criterion.resourceId.isBlank() || criterion.resourceId.startsWith("$pkg:id/")) { "Resource ID cần đầy đủ, bắt đầu bằng $pkg:id/." }
+        require(!observeUi || criterion.resourceId.isBlank() || criterion.resourceId.startsWith("$pkg:id/")) { "Resource ID cần đầy đủ, bắt đầu bằng $pkg:id/." }
         val app = context.applicationContext
         val runIntent = Intent(app, RunService::class.java)
         val item = JSONObject().apply {
@@ -78,8 +78,9 @@ object BenchEngine {
             put("device", "${Build.MANUFACTURER} ${Build.MODEL}"); put("android", Build.VERSION.RELEASE)
             put("sdk", Build.VERSION.SDK_INT); put("fingerprint", Build.FINGERPRINT)
             put("component", component); put("repeats", repeats); put("modes", JSONArray(modes))
-            put("protocol", "observed-ui-v3; discovery=stable-structure-v1; clock=uptime-before-am; stable=${if (criterion.automatic) 1500 else 500}ms; poll=200ms; warm=flags-0x10008000")
-            put("readinessCriterion", criterion.json()); put("metric", if (criterion.configured) "observed-ui-marker; separate-confirmation-method-and-cohort" else "observed-stable-ui-auto; confidence=heuristic; not-TTFD")
+            put("startupSource", "activity-manager-am-start-W"); put("observeUi", observeUi)
+            put("protocol", if (!observeUi) "android-startup-v1; launcher=MAIN/LAUNCHER; warm=flags-0x10008000" else "observed-ui-v4; discovery=stable-structure-v1; clock=uptime-before-am; stable=${if (criterion.automatic) 1500 else 500}ms; poll=200ms; warm=flags-0x10008000")
+            put("readinessCriterion", criterion.json()); put("metric", if (!observeUi) "android-total-time-reference; not-Play-Console" else if (criterion.configured) "observed-ui-marker; separate-confirmation-method-and-cohort" else "observed-stable-ui-auto; confidence=heuristic; not-TTFD")
             put("status", "running"); put("samples", JSONArray())
             val battery = app.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
             put("batteryLevel", battery?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1)
@@ -102,16 +103,19 @@ object BenchEngine {
                     while (index <= repeats) {
                         if (cancel) break
                         if (!app.getSystemService(PowerManager::class.java).isInteractive ||
-                            app.getSystemService(KeyguardManager::class.java).isKeyguardLocked || ReadinessService.instance !== observer) {
-                            cancel = true; stopReason = "Mở khóa màn hình, bật lại quan sát Trợ năng rồi chạy phiên mới. Kiểm tra Shizuku nếu dịch vụ đo mất kết nối."
+                            app.getSystemService(KeyguardManager::class.java).isKeyguardLocked || (observeUi && ReadinessService.instance !== observer)) {
+                            cancel = true; stopReason = "Mở khóa màn hình rồi chạy phiên mới. Nếu bật đo UI, kiểm tra quan sát Trợ năng. Kiểm tra Shizuku nếu dịch vụ đo mất kết nối."
                             pendingGuidance = stopReason; break
                         }
-                        progress = "$mode · lần $index/$repeats · làm theo hướng dẫn trên app đích"
+                        progress = "$mode · lần $index/$repeats · ${if (observeUi) "làm theo hướng dẫn trên app đích" else "đang lấy số đo Android"}"
                         RunService.update(app, progress)
-                        val result = try { GuidedSample.run(checkNotNull(remote), observer, criterion, component, mode, Process.myUid() / 100000) }
+                        val result = try {
+                            if (observer == null) StartupSample.run(checkNotNull(remote), component, mode, Process.myUid() / 100000)
+                            else GuidedSample.run(checkNotNull(remote), observer, criterion, component, mode, Process.myUid() / 100000)
+                        }
                         catch (e: Exception) {
                             pendingGuidance = "Không thể tiếp tục đo: ${MeasurementFailure.short(e.message.orEmpty())}. Kiểm tra Shizuku và quan sát Trợ năng, mở app đích xử lý màn hình chặn rồi thử phiên mới."
-                            if (ReadinessService.instance === observer && observer.ask("Cần khôi phục điều kiện đo", pendingGuidance!!, listOf("Dừng để kiểm tra")) >= 0) pendingGuidance = null
+                            if (observer != null && ReadinessService.instance === observer && observer.ask("Cần khôi phục điều kiện đo", pendingGuidance!!, listOf("Dừng để kiểm tra")) >= 0) pendingGuidance = null
                             GuidedSample("BenchError: ${MeasurementFailure.short(e.message.orEmpty())}\n${e.stackTraceToString().take(8000)}",
                                 JSONObject().put("status", "service_error"), "stop")
                         }
@@ -120,7 +124,9 @@ object BenchEngine {
                                 .put("trial", index).put("evidence", result.evidence))
                             history.save(item)
                         }
-                        if ((!EvidencePolicy.launchAccepted(result.evidence, result.raw) && !EvidencePolicy.launchAssisted(result.evidence, result.raw)) ||
+                        if (observer == null) {
+                            if (!LaunchResult.parse(mode, result.raw).valid) hasErrors = true
+                        } else if ((!EvidencePolicy.launchAccepted(result.evidence, result.raw) && !EvidencePolicy.launchAssisted(result.evidence, result.raw)) ||
                             !LaunchResult.parse(mode, result.raw).stateVerified) hasErrors = true
                         when (result.decision) {
                             "stop" -> {
@@ -148,7 +154,7 @@ object BenchEngine {
             } finally {
                 runCatching { history.save(item) }.onFailure { progress = "Không lưu được phiên đo. Kiểm tra dung lượng trống của thiết bị." }
                 runCatching { history.close() }
-                observer.hide()
+                observer?.hide()
                 running = false
                 RunService.update(app, progress, done = true)
                 runCatching { app.stopService(runIntent) }

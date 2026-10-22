@@ -86,8 +86,6 @@ class ReadinessService : AccessibilityService(), ReadinessObserver {
     }
     private fun inspect() {
         val target = criterion ?: return
-        val now = SystemClock.uptimeMillis()
-        synchronized(guard) { maxScanGap = maxOf(maxScanGap, now - lastScan); lastScan = now }
         if (!getSystemService(android.os.PowerManager::class.java).isInteractive || getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked) {
             synchronized(guard) { interrupted = true; marker.stable = -1 }; return
         }
@@ -120,8 +118,11 @@ class ReadinessService : AccessibilityService(), ReadinessObserver {
         val complete = root != null && pkg == target.packageName && pending.isEmpty()
         val candidate = AutoScreen.evaluate(elements, complete, blocker != null)
         val matched = (if (target.configured) nodes.count { matches(it) } == 1 else candidate.eligible) && blocker == null && (!target.automatic || complete)
+        // Timestamp after IPC/tree traversal: the observation cannot precede the scan.
+        val now = SystemClock.uptimeMillis()
         synchronized(guard) {
             if (criterion !== target) return
+            maxScanGap = maxOf(maxScanGap, now - lastScan); lastScan = now
             foreground = pkg
             autoScreen = candidate
             discoveryReason = candidate.reason

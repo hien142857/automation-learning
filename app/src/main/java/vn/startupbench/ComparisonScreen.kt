@@ -47,9 +47,12 @@ class ComparisonScreen(private val activity: Activity, private val content: Line
             listOf("COLD", "WARM", "HOT").any { base.assistedValues(it).isNotEmpty() && candidate.assistedValues(it).isNotEmpty() } -> MeasurementCohort.ASSISTED
             else -> MeasurementCohort.AUTOMATIC
         }
-        val fields = linkedMapOf("fingerprint" to "thiết bị / Android", "protocol" to "quy trình đo", "component" to "Activity", "powerSave" to "tiết kiệm pin", "plugged" to "trạng thái sạc", "readinessCriterion" to "mốc UI")
+        val fields = linkedMapOf("fingerprint" to "thiết bị / Android", "protocol" to "quy trình đo")
+        if (base.optString("startupSource") != MacrobenchmarkReport.SOURCE || candidate.optString("startupSource") != MacrobenchmarkReport.SOURCE)
+            fields.putAll(mapOf("component" to "Activity", "powerSave" to "tiết kiệm pin", "plugged" to "trạng thái sạc"))
+        if (base.optBoolean("observeUi", true) && candidate.optBoolean("observeUi", true)) fields["readinessCriterion"] = "mốc UI"
         val warnings = fields.mapNotNull { (key, label) ->
-            when { !base.has(key) || !candidate.has(key) -> "Thiếu thông tin $label"
+            when { !base.has(key) || !candidate.has(key) || base.optString(key).isBlank() || candidate.optString(key).isBlank() -> "Thiếu thông tin $label"
                 base.optString(key) != candidate.optString(key) -> "Khác $label"
                 else -> null }
         }.toMutableList()
@@ -57,8 +60,10 @@ class ComparisonScreen(private val activity: Activity, private val content: Line
             kotlin.math.abs(base.optInt("batteryTempTenthsC") - candidate.optInt("batteryTempTenthsC")) >= 30) warnings.add("Nhiệt độ đầu phiên lệch từ 3°C")
         val discovered = base.optJSONObject("readinessCriterion")?.optString("mode") == "auto-discovery" ||
             candidate.optJSONObject("readinessCriterion")?.optString("mode") == "auto-discovery"
-        if (discovered && (base.discoveredSignatures().size != 1 || base.discoveredSignatures() != candidate.discoveredSignatures()))
+        if (base.optBoolean("observeUi", true) && candidate.optBoolean("observeUi", true) && discovered && (base.discoveredSignatures().size != 1 || base.discoveredSignatures() != candidate.discoveredSignatures()))
             warnings.add("Giao diện tự phát hiện khác nhau hoặc chưa có cùng một mốc ổn định; không kết luận tối ưu từ các màn hình khác nhau")
+        if (base.optString("startupSource", "activity-manager-am-start-W") != candidate.optString("startupSource", "activity-manager-am-start-W"))
+            warnings.add("Khác nguồn: TTID Perfetto và ActivityManager TotalTime không dùng thay nhau")
         val assessments = listOf("COLD", "WARM", "HOT").associateWith { mode ->
             ComparisonAssessment.assess(base.cohortValues(mode, selected), candidate.cohortValues(mode, selected), warnings.isEmpty(), complete(base, mode) && complete(candidate, mode),
                 maxOf(base.observationIntervals(mode, selected).maxOrNull()?.toDouble() ?: 0.0, candidate.observationIntervals(mode, selected).maxOrNull()?.toDouble() ?: 0.0), statistic)
@@ -67,6 +72,20 @@ class ComparisonScreen(private val activity: Activity, private val content: Line
         content.addView(action("← Quay lại lịch sử", onBack))
         content.addView(text("So sánh phiên đo", 24f).apply { setTypeface(null, Typeface.BOLD) })
         content.addView(text(base.optString("label") + " · " + base.optString("package"), 14f, muted))
+        card {
+            val sameSource = base.optString("startupSource", "activity-manager-am-start-W") == candidate.optString("startupSource", "activity-manager-am-start-W")
+            val ttid = base.optString("startupSource") == MacrobenchmarkReport.SOURCE && sameSource
+            addView(text(if (ttid) "Tỷ lệ startup chậm · TTID Perfetto" else "Tỷ lệ startup chậm · nguồn đo riêng từng phiên", 18f))
+            addView(text("Mẫu lab, không phải tỷ lệ Play Console. Chênh lệch tính bằng điểm phần trăm; mẫu lỗi/thiếu không được coi là nhanh.", 13f, muted))
+            listOf("COLD", "WARM", "HOT").forEach { mode ->
+                val a = StartupVitals.from(base, mode); val b = StartupVitals.from(candidate, mode)
+                val delta = if (sameSource && a.slowPercent != null && b.slowPercent != null) String.format(Locale.US, "%+.2f điểm %%", b.slowPercent!! - a.slowPercent!!) else "chưa đủ dữ liệu"
+                addView(text("$mode: A ${a.slow}/${a.measured} · B ${b.slow}/${b.measured} · $delta", 15f))
+                addView(text("Thiếu/lỗi: A ${a.missing}, B ${b.missing}. Ngưỡng > ${a.thresholdMs} ms.", 12f, muted))
+            }
+            if (warnings.isNotEmpty()) addView(text(warnings.joinToString("\n"), 12f, cautionColor))
+        }
+        if (!base.optBoolean("observeUi", true) || !candidate.optBoolean("observeUi", true)) return
         content.addView(text("${statistic.label} thời gian quan sát mốc UI · nhóm ${selected.label}. Không phải TTFD chuẩn.", 13f, muted))
         if (discovered) content.addView(text("Đang đối chiếu thời gian đến giao diện ổn định tự phát hiện, không phải thời gian tải hoàn tất đã xác minh.", 13f, muted))
         fun selector(labels: List<String>, current: Int, changed: (Int) -> Unit): Spinner = Spinner(activity).apply {

@@ -9,6 +9,7 @@ object LaunchCommand {
         }
         return buildList {
             addAll(listOf("am", "start", "--user", userId.toString(), "-W"))
+            addAll(listOf("-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER"))
             // Intent.parseCommandArgs supports -f, but has no --activity-new-task option.
             // FLAG_ACTIVITY_NEW_TASK (0x10000000) | FLAG_ACTIVITY_CLEAR_TASK (0x00008000).
             if (mode == "WARM") addAll(listOf("-f", "0x10008000"))
